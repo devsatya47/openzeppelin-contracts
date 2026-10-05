@@ -8,7 +8,7 @@ let grainTile: Buffer | undefined;
 
 /** Rasterises an artwork and overlays a subtle film-grain texture (tiled noise is far cheaper than an SVG filter). */
 export async function renderArtwork(svg: string) {
-  grainTile ??= await sharp({ create: { width: 256, height: 256, channels: 3, noise: { type: 'gaussian', mean: 128, sigma: 40 } } })
+  grainTile ??= await sharp({ create: { width: 256, height: 256, channels: 3, background: '#808080', noise: { type: 'gaussian', mean: 128, sigma: 40 } } })
     .ensureAlpha(0.07)
     .png()
     .toBuffer();

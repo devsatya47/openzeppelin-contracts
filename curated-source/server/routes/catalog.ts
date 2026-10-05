@@ -248,7 +248,8 @@ catalogRouter.get('/listings/:slug', (req, res) => {
     .select({ l: listings, g: galleries })
     .from(listings)
     .innerJoin(galleries, eq(galleries.id, listings.galleryId))
-    .where(eq(listings.slug, req.params.slug))
+    // Accepts a slug or a numeric id (used by checkout links).
+    .where(/^\d+$/.test(req.params.slug) ? eq(listings.id, Number(req.params.slug)) : eq(listings.slug, req.params.slug))
     .get();
   if (!row) throw notFound('Listing not found');
   const isOwner = req.user && row.g.ownerId === req.user.id;

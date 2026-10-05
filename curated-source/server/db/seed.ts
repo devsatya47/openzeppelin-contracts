@@ -7,6 +7,7 @@ import path from 'node:path';
 import sharp from 'sharp';
 import { config } from '../config';
 import { artworkSvg, renderArtwork, type ArtStyle } from './artgen';
+import type { Role } from './schema';
 
 if (config.isProd && !process.argv.includes('--force')) {
   console.error('Refusing to wipe the database in production. Re-run with --force if you are sure.');
@@ -33,12 +34,12 @@ const { users, galleries, categories, listings, listingMedia, orders, orderEvent
 
 export const DEMO_PASSWORDS = { admin: 'Admin#2026', moderator: 'Moderator#2026', seller: 'Seller#2026', buyer: 'Buyer#2026' };
 
-async function user(name: string, email: string, role: schema.Role, password: string, country = 'US') {
+async function user(name: string, email: string, role: Role, password: string, country = 'US') {
   return db.insert(users).values({ name, email, role, country, passwordHash: await hashPassword(password) }).returning().get();
 }
 
 const superadmin = await user('Celeste Arden', 'admin@curated-source.com', 'superadmin', DEMO_PASSWORDS.admin);
-const subadmin = await user('Marcus Vale', 'moderator@curated-source.com', 'subadmin', DEMO_PASSWORDS.moderator);
+await user('Marcus Vale', 'moderator@curated-source.com', 'subadmin', DEMO_PASSWORDS.moderator);
 const sLumiere = await user('Élise Moreau', 'lumiere@curated-source.com', 'seller', DEMO_PASSWORDS.seller, 'FR');
 const sNoir = await user('Julian Cross', 'noir@curated-source.com', 'seller', DEMO_PASSWORDS.seller, 'US');
 const sForm = await user('Astrid Nyholm', 'formvoid@curated-source.com', 'seller', DEMO_PASSWORDS.seller, 'DK');
@@ -134,7 +135,7 @@ db.insert(galleries)
 
 const suggested = db
   .insert(categories)
-  .values({ name: 'Tapestry & Textile', slug: 'tapestry-textile-suggested', parentId: cat['design-furniture'], status: 'pending', suggestedById: sForm.id })
+  .values({ name: 'Ash-Glazed Stoneware', slug: 'ash-glazed-stoneware-suggested', parentId: cat['ceramics-glass'], status: 'pending', suggestedById: sForm.id })
   .returning()
   .get();
 
@@ -343,4 +344,3 @@ Demo accounts:
   Buyer        buyer@curated-source.com          ${DEMO_PASSWORDS.buyer}
   Buyer        collector@curated-source.com      ${DEMO_PASSWORDS.buyer}
 `);
-void subadmin;

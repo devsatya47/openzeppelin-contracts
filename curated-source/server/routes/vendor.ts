@@ -95,28 +95,31 @@ const mediaSchema = z.object({
 });
 
 const listingFields = z.object({
-    title: z.string().trim().min(2).max(140),
-    artist: z.string().trim().min(2).max(120),
-    year: z.number().int().min(1000).max(new Date().getFullYear() + 1).nullable().optional(),
-    medium: z.string().trim().min(2).max(80),
-    description: z.string().trim().max(6000).default(''),
-    widthCm: z.number().positive().max(10000).nullable().optional(),
-    heightCm: z.number().positive().max(10000).nullable().optional(),
-    depthCm: z.number().positive().max(10000).nullable().optional(),
-    priceCents: z.number().int().min(100).max(10_000_000_000),
-    shippingDomesticCents: z.number().int().min(0).max(100_000_00),
-    shippingInternationalCents: z.number().int().min(0).max(100_000_00),
-    originCountry: z.string().trim().length(2).toUpperCase().optional(),
-    provenance: z.string().trim().max(4000).default(''),
-    edition: z.string().trim().max(120).default('Unique work'),
-    certificateOfAuthenticity: z.boolean().default(true),
-    categoryId: z.number().int().positive().optional(),
-    suggestedCategory: z.object({ parentId: z.number().int().positive(), name: z.string().trim().min(2).max(60) }).optional(),
-    status: z.enum(['draft', 'active']).default('active'),
-    media: z.array(mediaSchema).max(12).default([]),
+  title: z.string().trim().min(2).max(140),
+  artist: z.string().trim().min(2).max(120),
+  year: z.number().int().min(1000).max(new Date().getFullYear() + 1).nullable().optional(),
+  medium: z.string().trim().min(2).max(80),
+  description: z.string().trim().max(6000).default(''),
+  widthCm: z.number().positive().max(10000).nullable().optional(),
+  heightCm: z.number().positive().max(10000).nullable().optional(),
+  depthCm: z.number().positive().max(10000).nullable().optional(),
+  priceCents: z.number().int().min(100).max(10_000_000_000),
+  shippingDomesticCents: z.number().int().min(0).max(100_000_00),
+  shippingInternationalCents: z.number().int().min(0).max(100_000_00),
+  originCountry: z.string().trim().length(2).toUpperCase().optional(),
+  provenance: z.string().trim().max(4000).default(''),
+  edition: z.string().trim().max(120).default('Unique work'),
+  certificateOfAuthenticity: z.boolean().default(true),
+  categoryId: z.number().int().positive().optional(),
+  suggestedCategory: z.object({ parentId: z.number().int().positive(), name: z.string().trim().min(2).max(60) }).optional(),
+  status: z.enum(['draft', 'active']).default('active'),
+  media: z.array(mediaSchema).max(12).default([]),
 });
 
-const listingSchema = listingFields.refine((v) => v.categoryId || v.suggestedCategory, { message: 'Choose a category or suggest a new one', path: ['categoryId'] });
+const listingSchema = listingFields.refine((v) => v.categoryId || v.suggestedCategory, {
+  message: 'Choose a category or suggest a new one',
+  path: ['categoryId'],
+});
 
 /** Resolves the listing's category, creating a pending user-suggested subcategory when needed. */
 function resolveCategory(userId: number, input: { categoryId?: number; suggestedCategory?: { parentId: number; name: string } }) {

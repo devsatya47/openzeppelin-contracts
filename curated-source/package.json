@@ -13,7 +13,7 @@
     "dev:web": "vite",
     "build": "npm run build:web && npm run build:api",
     "build:web": "vite build",
-    "build:api": "esbuild server/index.ts --bundle --platform=node --format=esm --packages=external --outfile=build/server.js",
+    "build:api": "esbuild server/index.ts --bundle --platform=node --format=esm --packages=external --outfile=build/server.js && rm -rf build/migrations && cp -r server/db/migrations build/migrations",
     "start": "NODE_ENV=production node build/server.js",
     "seed": "tsx server/db/seed.ts",
     "db:generate": "drizzle-kit generate",
