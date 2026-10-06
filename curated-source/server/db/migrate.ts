@@ -15,8 +15,3 @@ export function runMigrations(db: DB) {
   migrate(db, { migrationsFolder: folder });
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  const { db } = await import('./client');
-  runMigrations(db);
-  console.log('Migrations applied.');
-}

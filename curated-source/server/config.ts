@@ -21,5 +21,7 @@ export const config = {
     .map((s) => s.trim())
     .filter(Boolean),
   commissionRate: Number(env.PLATFORM_COMMISSION ?? 0.12),
+  // Load the demo catalogue on boot when the database is empty (used for one-click hosted deployments).
+  autoSeedDemo: env.AUTO_SEED_DEMO === 'true',
   maxUploadBytes: 25 * 1024 * 1024,
 };

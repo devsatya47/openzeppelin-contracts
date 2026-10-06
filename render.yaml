@@ -1,0 +1,28 @@
+# Render Blueprint for the curated-source marketplace (app lives in ./curated-source).
+# Render → New → Blueprint → pick this repository. See curated-source/README.md → Deployment.
+services:
+  - type: web
+    name: curated-source
+    runtime: node
+    plan: starter # persistent disks require a paid instance
+    rootDir: curated-source
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_PATH
+        value: /var/data/curated-source.db
+      - key: UPLOAD_DIR
+        value: /var/data/uploads
+      - key: AUTO_SEED_DEMO
+        value: "true"
+      - key: PLATFORM_COMMISSION
+        value: "0.12"

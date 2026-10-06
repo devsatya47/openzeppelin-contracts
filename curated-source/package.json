@@ -17,7 +17,7 @@
     "start": "NODE_ENV=production node build/server.js",
     "seed": "tsx server/db/seed.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx server/db/migrate.ts",
+    "db:migrate": "tsx server/db/migrate-cli.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.server.json",
     "test": "node --import tsx --test server/test/*.test.ts"
   },

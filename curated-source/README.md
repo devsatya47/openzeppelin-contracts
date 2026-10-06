@@ -47,6 +47,8 @@ The seed contains:
 | `npm run seed` | **Wipes** and reseeds the database and uploads. Refuses to run in production without `--force`. |
 | `npm run db:generate` | Generates a new SQL migration after editing `server/db/schema.ts` |
 | `npm run db:migrate` | Applies migrations. The server also applies them on boot. |
+
+Set `AUTO_SEED_DEMO=true` to have the server load the demo data itself on first boot when the database is empty (used by the Render Blueprint).
 | `npm test` | API integration tests (`node:test`): full escrow lifecycle and RBAC |
 | `npm run typecheck` | TypeScript checks for the client and the server |
 
@@ -109,7 +111,24 @@ Order actions are also checked against the actor's relationship to the order: bu
 
 ## Deployment
 
-### Option A: single Node server (VPS, Hostinger VPS, Render, Fly…)
+### Easiest: Render (one-click Blueprint)
+
+The repository root contains `render.yaml`, which describes the whole setup:
+- a web service built from `curated-source/`
+- a 1 GB persistent disk for the database and uploads
+- a generated `JWT_SECRET`
+- `AUTO_SEED_DEMO=true`, so the demo catalogue loads on the very first boot
+
+1. Create an account at https://render.com and sign in with GitHub.
+2. **New → Blueprint**, pick this repository, then click **Apply**. Disks need a paid instance (Starter plan).
+3. Wait for the first deploy (about 3–5 minutes). The demo catalogue appears about a minute after the service goes live.
+4. Open the `…onrender.com` URL Render shows. To use your own domain, go to **Settings → Custom Domains**, add `curated-source.com`, and copy the DNS records Render gives you into your domain registrar.
+
+Data on the disk survives restarts and redeploys. The demo is only loaded while the database is empty.
+
+> **Public demo accounts:** while the demo accounts exist, anyone can sign in as Super-Admin with the published credentials (the login page has one-click buttons). That suits a showcase, but before real use set `AUTO_SEED_DEMO=false` and start from a fresh disk. Add your own admin first by registering, then promote that account with a one-off SQL update or a seed of your own.
+
+### Option A: single Node server (VPS, Hostinger VPS, Fly…)
 
 ```bash
 npm ci && npm run build
