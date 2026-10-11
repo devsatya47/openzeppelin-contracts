@@ -8,6 +8,7 @@ import rateLimit from 'express-rate-limit';
 import { config } from './config';
 import { authenticate } from './lib/auth';
 import { POLICIES_VERSION } from './lib/legal';
+import { renderShell } from './lib/seo';
 import { errorHandler, notFoundHandler } from './lib/errors';
 import { authRouter } from './routes/auth';
 import { catalogRouter } from './routes/catalog';
@@ -78,9 +79,9 @@ export function createApp() {
     app.use('/assets', express.static(path.join(config.distDir, 'assets'), { maxAge: '1y', immutable: true, fallthrough: false }));
     app.use(express.static(config.distDir, { maxAge: '1h', index: false }));
     // The page itself must always be revalidated so a new deploy is picked up straight away.
-    app.get(/^(?!\/api|\/uploads|\/assets).*/, (_req, res) => {
+    app.get(/^(?!\/api|\/uploads|\/assets).*/, (req, res) => {
       res.setHeader('Cache-Control', 'no-cache');
-      res.sendFile(path.join(config.distDir, 'index.html'));
+      res.type('html').send(renderShell(req));
     });
   }
 

@@ -4,6 +4,7 @@ import { Plus } from 'lucide-react';
 import { BarChart } from '../../components/BarChart';
 import { Page } from '../../components/Layout';
 import { MediaUploader } from '../../components/MediaUploader';
+import { ShareButton } from '../../components/ShareButton';
 import { OrderRow } from '../../components/OrderRow';
 import { Empty, ErrorNote, Field, Notice, Spinner, Stat, StatusPill, Tabs } from '../../components/ui';
 import { api, mediaUrl } from '../../lib/api';
@@ -123,6 +124,9 @@ function Inventory() {
                   <td className="space-x-3 whitespace-nowrap text-right text-[10px] uppercase tracking-[0.15em]">
                     {['active', 'draft', 'archived'].includes(l.status) && <Link to={`/vendor/listings/${l.id}`} className="text-mute hover:text-gold">Edit</Link>}
                     {l.status === 'active' && <Link to={`/listing/${l.slug}`} className="text-mute hover:text-gold">View</Link>}
+                    {l.status === 'active' && (
+                      <ShareButton path={`/listing/${l.slug}`} title={`${l.title} by ${l.artist}`} image={l.cover?.url} className="inline-flex items-center gap-1 uppercase text-mute hover:text-gold" />
+                    )}
                     {l.status === 'active' && <button onClick={() => act(() => api(`/vendor/listings/${l.id}`, { method: 'DELETE' }))} className="uppercase text-mute hover:text-bad">Archive</button>}
                     {['draft', 'archived'].includes(l.status) && <button onClick={() => act(() => api(`/vendor/listings/${l.id}`, { method: 'PATCH', body: { status: 'active' } }))} className="uppercase text-gold">Publish</button>}
                   </td>
@@ -325,6 +329,7 @@ export default function VendorDashboard() {
         </div>
         <div className="flex items-center gap-3">
           {gallery && <StatusPill status={gallery.status} />}
+          {gallery?.status === 'approved' && <ShareButton path={`/galleries/${gallery.slug}`} title={gallery.name} label="Share gallery" className="btn-ghost" />}
           <Link to="/vendor/listings/new" className="btn-gold"><Plus size={14} /> List a work</Link>
         </div>
       </div>

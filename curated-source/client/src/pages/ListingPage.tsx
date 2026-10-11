@@ -4,6 +4,7 @@ import { Award, BadgeCheck, Eye, MessageSquare, ShieldCheck, Truck } from 'lucid
 import { Page } from '../components/Layout';
 import { ListingGrid } from '../components/ListingCard';
 import { MediaGallery } from '../components/MediaGallery';
+import { ShareButton } from '../components/ShareButton';
 import { ErrorNote, SectionHeading, Spinner, Stars } from '../components/ui';
 import NotFound from './NotFound';
 import { api } from '../lib/api';
@@ -162,7 +163,10 @@ export default function ListingPage() {
                 <div className="text-[10px] uppercase tracking-[0.22em] text-faint">Price</div>
                 <div className="mt-1 font-serif text-4xl tabular-nums text-gold">{money(l.priceCents, l.currency)}</div>
               </div>
-              <div className="flex items-center gap-1.5 text-xs text-faint"><Eye size={13} /> {l.views}</div>
+              <div className="flex items-center gap-4">
+                <span className="flex items-center gap-1.5 text-xs text-faint"><Eye size={13} /> {l.views}</span>
+                <ShareButton path={`/listing/${l.slug}`} title={`${l.title} by ${l.artist}`} text={`${money(l.priceCents, l.currency)} on Curated Art`} image={l.media[0]?.url} />
+              </div>
             </div>
 
             {l.isOwner ? (
