@@ -19,8 +19,13 @@ declare module 'express-serve-static-core' {
 export const hashPassword = (pw: string) => bcrypt.hash(pw, 11);
 export const verifyPassword = (pw: string, hash: string) => bcrypt.compare(pw, hash);
 
+/**
+ * Each token records which password it was issued under (`pv`); changing the password changes
+ * passwordChangedAt, so every token issued before the change stops matching and is rejected.
+ */
 export function signToken(user: { id: number }) {
-  return jwt.sign({ sub: String(user.id) }, config.jwtSecret, {
+  const row = db.select({ passwordChangedAt: users.passwordChangedAt }).from(users).where(eq(users.id, user.id)).get();
+  return jwt.sign({ sub: String(user.id), pv: row?.passwordChangedAt ?? '' }, config.jwtSecret, {
     expiresIn: config.jwtExpiresIn as jwt.SignOptions['expiresIn'],
   });
 }
@@ -32,11 +37,20 @@ export const authenticate: RequestHandler = (req, _res, next) => {
   try {
     const payload = jwt.verify(header.slice(7), config.jwtSecret) as jwt.JwtPayload;
     const user = db
-      .select({ id: users.id, email: users.email, name: users.name, role: users.role, status: users.status })
+      .select({
+        id: users.id,
+        email: users.email,
+        name: users.name,
+        role: users.role,
+        status: users.status,
+        passwordChangedAt: users.passwordChangedAt,
+      })
       .from(users)
       .where(eq(users.id, Number(payload.sub)))
       .get();
-    if (user && user.status === 'active') {
+    // Tokens issued under an earlier password are no longer valid.
+    const revoked = (payload.pv ?? '') !== (user?.passwordChangedAt ?? '');
+    if (user && user.status === 'active' && !revoked) {
       req.user = { id: user.id, email: user.email, name: user.name, role: user.role };
     }
   } catch {

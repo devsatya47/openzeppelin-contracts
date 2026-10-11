@@ -35,6 +35,12 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     res.status(413).json({ error: 'File too large' });
     return;
   }
+  // Errors from Express middleware (e.g. a missing static file) carry their own 4xx status.
+  const status = Number(err?.status ?? err?.statusCode);
+  if (status >= 400 && status < 500) {
+    res.status(status).json({ error: status === 404 ? 'Not found' : 'Bad request' });
+    return;
+  }
   console.error(err);
   res.status(500).json({ error: 'Internal server error' });
 };

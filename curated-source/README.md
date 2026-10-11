@@ -99,6 +99,14 @@ Set `AUTO_SEED_DEMO=true` to have the server load the demo data itself on first 
 - **Price cap (`MAX_PRICE_USD`, default 10000).** No work can be listed above this price. A buyer's purchases from one gallery are also capped at this amount within 90 days, because linked purchases count too. Works already above the cap show "Enquire about this work" instead of "Acquire Piece". US$10,000 keeps every sale below €10,000, the threshold at which UK Art Market Participant anti-money-laundering rules apply. Raise the cap only after registering with HMRC.
 - These are carefully drafted templates, not legal advice; have them reviewed by a UK solicitor before taking real payments.
 
+## Account security
+
+- **Account settings** (`/account/settings`): every user can change their name, email and password. Changing the email or password asks for the current password. Admin passwords must be at least 12 characters.
+- **Changing a password signs out every other device.** Each session token records the password it was issued under, so older tokens stop working.
+- **Brute-force protection:** after `MAX_FAILED_LOGINS` (50) failed sign-ins, the account is locked for `LOGIN_LOCK_HOURS` (48), and even the right password is refused. The sending IP address is blocked for the same period. A Super-Admin can unlock accounts under **Admin → Users**. If the only Super-Admin is locked out, run `npm run unlock-user -- their@email` from Render's **Shell** tab.
+- **Demo sign-in buttons** are hidden in production unless `SHOW_DEMO_LOGINS=true`.
+- **First thing after deploying a seeded site:** sign in as each staff account and change its email and password. The demo passwords are public.
+
 ## RBAC
 
 Permissions are declared in one matrix (`server/lib/rbac.ts`) and enforced by `requirePermission()` on every route. The client hides UI the same way, but the server is the source of truth.

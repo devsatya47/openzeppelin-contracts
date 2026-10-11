@@ -24,6 +24,12 @@ export const config = {
   // Highest price allowed per work, and per buyer with one gallery over 90 days (linked purchases).
   // US$10,000 stays below the €10,000 threshold at which UK Art Market Participant AML rules apply.
   maxPriceCents: Math.round(Number(env.MAX_PRICE_USD ?? 10_000) * 100),
+  // Brute-force protection: after this many failed sign-ins, the account (and the sending IP) is blocked.
+  maxFailedLogins: Number(env.MAX_FAILED_LOGINS ?? 50),
+  maxFailedLoginsPerIp: Number(env.MAX_FAILED_LOGINS_PER_IP ?? env.MAX_FAILED_LOGINS ?? 50),
+  loginLockHours: Number(env.LOGIN_LOCK_HOURS ?? 48),
+  // One-click demo sign-in buttons on the login page. Off in production unless explicitly enabled.
+  showDemoLogins: env.SHOW_DEMO_LOGINS ? env.SHOW_DEMO_LOGINS === 'true' : !isProd,
   // Load the demo catalogue on boot when the database is empty (used for one-click hosted deployments).
   autoSeedDemo: env.AUTO_SEED_DEMO === 'true',
   maxUploadBytes: 25 * 1024 * 1024,

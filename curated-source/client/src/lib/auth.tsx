@@ -8,6 +8,8 @@ type AuthCtx = {
   login: (email: string, password: string) => Promise<User>;
   register: (input: { name: string; email: string; password: string; country: string }) => Promise<User>;
   logout: () => void;
+  /** Replaces the current session, e.g. after a password change issues a fresh token. */
+  setSession: (token: string | null, user: User) => void;
   refresh: () => Promise<void>;
   can: (permission: string) => boolean;
 };
@@ -54,9 +56,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   };
 
+  const setSession = (token: string | null, next: User) => {
+    if (token) tokenStore.set(token);
+    setUser(next);
+  };
+
   const can = (p: string) => !!user?.permissions.includes(p);
 
-  return <Ctx.Provider value={{ user, ready, login, register, logout, refresh, can }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ user, ready, login, register, logout, refresh, can, setSession }}>{children}</Ctx.Provider>;
 }
 
 export function useAuth() {

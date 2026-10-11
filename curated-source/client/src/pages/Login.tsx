@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Page } from '../components/Layout';
 import { ErrorNote, Field } from '../components/ui';
 import { useAuth } from '../lib/auth';
-import { useDocumentTitle } from '../lib/hooks';
+import { useDocumentTitle, usePlatformConfig } from '../lib/hooks';
 
 const DEMO = [
   ['Buyer', 'buyer@curated-source.com', 'Buyer#2026'],
@@ -21,6 +21,7 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const { showDemoLogins } = usePlatformConfig();
 
   const submit = async (e: React.FormEvent, creds?: [string, string]) => {
     e.preventDefault();
@@ -51,15 +52,17 @@ export default function Login() {
         <p className="mt-6 text-center text-sm text-mute">
           New to Curated Art? <Link to={`/register${params.get('next') ? `?next=${encodeURIComponent(params.get('next')!)}` : ''}`} className="text-gold hover:underline">Create an account</Link>
         </p>
-        <div className="mt-12 border border-line p-5">
-          <div className="eyebrow mb-4">Demo accounts</div>
-          <div className="grid grid-cols-2 gap-2">
-            {DEMO.map(([role, e, p]) => (
-              <button key={role} onClick={(ev) => submit(ev, [e, p])} className="btn-ghost btn-sm" disabled={busy}>{role}</button>
-            ))}
+        {showDemoLogins && (
+          <div className="mt-12 border border-line p-5">
+            <div className="eyebrow mb-4">Demo accounts</div>
+            <div className="grid grid-cols-2 gap-2">
+              {DEMO.map(([role, e, p]) => (
+                <button key={role} onClick={(ev) => submit(ev, [e, p])} className="btn-ghost btn-sm" disabled={busy}>{role}</button>
+              ))}
+            </div>
+            <p className="mt-3 text-xs text-faint">One-click sign-in with the seeded demo credentials (see README).</p>
           </div>
-          <p className="mt-3 text-xs text-faint">One-click sign-in with the seeded demo credentials (see README).</p>
-        </div>
+        )}
       </div>
     </Page>
   );
