@@ -292,7 +292,7 @@ export default function OrderPage() {
             </Field>
           )}
           <ErrorNote error={actionError} />
-          <button className="btn-gold w-full" disabled={busy}>{busy ? 'Working…' : 'Confirm'}</button>
+          <button className="btn-gold w-full" disabled={busy}>{busy ? 'Working…' : modal === 'dispatch' ? 'Confirm dispatch' : modal === 'dispute' ? 'Open dispute' : 'Confirm'}</button>
         </form>
       </Modal>
     </Page>
