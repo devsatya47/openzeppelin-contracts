@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lt, notInArray, sql } from 'drizzle-orm';
 import { db } from '../db/client';
 import { disputes, escrowTransactions, galleries, listings, orderEvents, orders, reviews, users } from '../db/schema';
 import { config } from '../config';
@@ -10,10 +10,12 @@ import { hydrateListing, hydrateListings } from '../lib/listings';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors';
 import { orderReference, shippingFor } from '../lib/util';
 import { audit } from '../lib/audit';
+import { acceptTermsSchema, POLICIES_VERSION } from '../lib/legal';
 
 export const ordersRouter = Router();
 
 export const PENDING_TTL_MINUTES = 30;
+export const LINKED_PURCHASE_DAYS = 90;
 
 /** Releases reservations held by checkouts that were never paid. */
 export function expireStaleOrders() {
@@ -40,7 +42,9 @@ const addressSchema = z.object({
 });
 
 ordersRouter.post('/', requirePermission('order:create'), (req, res) => {
-  const body = z.object({ listingId: z.number().int().positive(), shippingAddress: addressSchema }).parse(req.body);
+  const body = z
+    .object({ listingId: z.number().int().positive(), shippingAddress: addressSchema, acceptTerms: acceptTermsSchema })
+    .parse(req.body);
   const user = currentUser(req);
   expireStaleOrders();
 
@@ -54,6 +58,29 @@ ordersRouter.post('/', requirePermission('order:create'), (req, res) => {
     if (!row || row.g.status !== 'approved') throw notFound('Listing not found');
     if (row.g.ownerId === user.id) throw badRequest('You cannot acquire a piece from your own gallery');
     if (row.l.status !== 'active') throw conflict('This piece is no longer available');
+    if (row.l.priceCents > config.maxPriceCents) {
+      throw badRequest('This work is available by private enquiry only. Please contact us.');
+    }
+    // Linked purchases count towards the AML threshold, so cap a buyer's spend with one gallery over 90 days.
+    const since = new Date(Date.now() - LINKED_PURCHASE_DAYS * 86_400_000).toISOString();
+    const recent =
+      tx
+        .select({ total: sql<number>`coalesce(sum(${orders.priceCents}), 0)` })
+        .from(orders)
+        .where(
+          and(
+            eq(orders.buyerId, user.id),
+            eq(orders.galleryId, row.g.id),
+            gte(orders.createdAt, since),
+            notInArray(orders.status, ['cancelled', 'refunded']),
+          ),
+        )
+        .get()?.total ?? 0;
+    if (recent + row.l.priceCents > config.maxPriceCents) {
+      throw badRequest(
+        `Purchases from one gallery are limited to $${(config.maxPriceCents / 100).toLocaleString('en-US')} within ${LINKED_PURCHASE_DAYS} days. Please contact us to arrange this acquisition.`,
+      );
+    }
 
     const ship = shippingFor(row.l, body.shippingAddress.country);
     const total = row.l.priceCents + ship.cents;
@@ -78,7 +105,11 @@ ordersRouter.post('/', requirePermission('order:create'), (req, res) => {
     tx.insert(orderEvents).values({ orderId: created.id, status: 'pending', note: `Reserved for ${PENDING_TTL_MINUTES} minutes pending payment`, actorId: user.id }).run();
     return created;
   });
-  audit(req, 'order.create', 'order', order.id, { listingId: order.listingId, totalCents: order.totalCents });
+  audit(req, 'order.create', 'order', order.id, {
+    listingId: order.listingId,
+    totalCents: order.totalCents,
+    acceptedPolicies: POLICIES_VERSION,
+  });
   res.status(201).json({ order });
 });
 

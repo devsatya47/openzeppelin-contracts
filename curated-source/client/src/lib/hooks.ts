@@ -28,6 +28,14 @@ export function useApi<T>(path: string | null) {
   return { data, error, loading, reload, setData };
 }
 
+export type PlatformConfig = { commissionRate: number; policiesVersion: string; maxPriceCents: number };
+
+/** Commission, policy version and price cap published by the API (with safe defaults while loading). */
+export function usePlatformConfig(): PlatformConfig {
+  const { data } = useApi<PlatformConfig>('/config');
+  return data ?? { commissionRate: 0.12, policiesVersion: '', maxPriceCents: 1_000_000 };
+}
+
 export function useDebounced<T>(value: T, ms = 220) {
   const [v, setV] = useState(value);
   useEffect(() => {
@@ -51,6 +59,6 @@ export function useClickOutside<T extends HTMLElement>(onOutside: () => void) {
 
 export function useDocumentTitle(title: string | undefined) {
   useEffect(() => {
-    if (title) document.title = `${title} — curated-source`;
+    if (title) document.title = `${title} — Curated Art`;
   }, [title]);
 }

@@ -1,4 +1,4 @@
-# curated-source.com
+# Curated Art (curated-art.shop)
 
 A full-stack, multi-vendor luxury marketplace for original art, collectible design and objects. It offers escrow-protected acquisitions, vendor onboarding, and a full admin control panel.
 
@@ -90,6 +90,14 @@ Set `AUTO_SEED_DEMO=true` to have the server load the demo data itself on first 
   - Payout processing (super-admin only)
   - User role and suspension management (super-admin only)
   - Paginated audit log and escrow ledger
+
+## Brand, company details and policies
+
+- **Brand and company details** live in `client/src/lib/site.ts`. Curated Art is a trading name of FITMORF LTD. UK law requires the company number and registered office to be shown, so fill those placeholders before going live.
+- **Policy pages** are in `client/src/pages/legal/docs.tsx`, served at `/legal/terms`, `/legal/seller-agreement`, `/legal/shipping`, `/legal/refunds` and `/legal/privacy`, plus a `/contact` page.
+- **Recorded acceptance:** checkout and gallery sign-up require ticking a box. The API rejects orders and applications without it, and records the accepted `POLICIES_VERSION` (`server/lib/legal.ts`) in the audit log. When the policies change materially, bump that version and the "last updated" date in `site.ts`.
+- **Price cap (`MAX_PRICE_USD`, default 10000).** No work can be listed above this price. A buyer's purchases from one gallery are also capped at this amount within 90 days, because linked purchases count too. Works already above the cap show "Enquire about this work" instead of "Acquire Piece". US$10,000 keeps every sale below €10,000, the threshold at which UK Art Market Participant anti-money-laundering rules apply. Raise the cap only after registering with HMRC.
+- These are carefully drafted templates, not legal advice; have them reviewed by a UK solicitor before taking real payments.
 
 ## RBAC
 
