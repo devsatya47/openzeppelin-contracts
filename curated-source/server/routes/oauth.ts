@@ -62,6 +62,10 @@ const fail = (res: ExpressResponse, message: string) => res.redirect(`/login?err
 oauthRouter.get('/:provider/start', (req, res) => {
   const provider = req.params.provider as Provider;
   if (!enabledProviders().includes(provider)) return void fail(res, 'This sign-in option is not available yet.');
+  // Start on the canonical host (e.g. www.), so the state cookie is set where the provider will return.
+  if (config.publicUrl && new URL(config.publicUrl).host !== req.get('host')) {
+    return void res.redirect(`${config.publicUrl}${req.originalUrl}`);
+  }
   const state = crypto.randomBytes(24).toString('base64url');
   const payload = Buffer.from(JSON.stringify({ state, provider, next: safeNext(req.query.next) })).toString('base64url');
   res.cookie(STATE_COOKIE, payload, { httpOnly: true, secure: config.isProd, sameSite: 'lax', maxAge: 10 * 60_000, path: '/api/auth/oauth' });

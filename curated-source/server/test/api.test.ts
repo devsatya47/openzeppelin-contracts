@@ -260,6 +260,13 @@ test('Google sign-in: sign up, sign in again, link by email, staff refused, stat
   assert.match(decodeURIComponent(staff.location), /Admin accounts must sign in with email and password/);
   const forged = await signIn('newbie', { tamper: true });
   assert.match(decodeURIComponent(forged.location), /session expired/);
+
+  // Visitors on another host name (e.g. without www) are first sent to PUBLIC_URL.
+  const { config } = await import('../config');
+  config.publicUrl = 'https://www.example-art.shop';
+  const hop = await fetch(`${base}/api/auth/oauth/google/start?next=/gallery`, { redirect: 'manual' });
+  assert.equal(hop.headers.get('location'), 'https://www.example-art.shop/api/auth/oauth/google/start?next=/gallery');
+  config.publicUrl = '';
 });
 
 test('RBAC guards', async () => {
