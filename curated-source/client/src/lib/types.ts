@@ -104,6 +104,7 @@ export type Order = {
 };
 
 export type OrderDetail = Order & {
+  trackingUrl: string | null;
   gallery: { id: number; name: string; slug: string };
   buyer: { id: number; name: string; email: string };
   events: { id: number; status: OrderStatus; note: string | null; createdAt: string; actor: string | null }[];

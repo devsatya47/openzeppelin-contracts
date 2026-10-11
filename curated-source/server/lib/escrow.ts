@@ -14,6 +14,7 @@ import type { AuthUser } from './auth';
 import { can } from './rbac';
 import { badRequest, forbidden, notFound } from './errors';
 import { nowIso } from './util';
+import { normalizeTracking, TRACKING_PATTERN } from '../../shared/carriers';
 
 export type OrderAction =
   | 'pay'
@@ -92,10 +93,14 @@ export function transitionOrder(user: AuthUser, orderId: number, action: OrderAc
         note ??= 'Order cancelled before payment';
         break;
       case 'dispatch':
-        if (!input.carrier || !input.trackingNumber) throw badRequest('Carrier and tracking number are required');
-        patch.carrier = input.carrier;
-        patch.trackingNumber = input.trackingNumber;
-        note ??= `Dispatched via ${input.carrier} (${input.trackingNumber})`;
+        if (!input.carrier?.trim() || !input.trackingNumber?.trim()) throw badRequest('Carrier and tracking number are required');
+        const tracking = normalizeTracking(input.trackingNumber);
+        if (!TRACKING_PATTERN.test(tracking)) {
+          throw badRequest('Enter the tracking number exactly as shown on the shipping label (6–40 letters or digits)');
+        }
+        patch.carrier = input.carrier.trim();
+        patch.trackingNumber = tracking;
+        note ??= `Dispatched via ${patch.carrier} (${tracking})`;
         break;
       case 'confirm_delivery':
         note ??= 'Delivery confirmed — inspection window open';

@@ -123,7 +123,11 @@ test('full marketplace lifecycle: onboarding → listing → escrow → payout',
   assert.equal((await act('dispatch', sellerToken, { carrier: 'DHL', trackingNumber: 'X' })).status, 400, 'cannot dispatch before payment');
   assert.equal((await act('pay', sellerToken)).status, 403, 'seller cannot pay for buyer');
   assert.equal((await act('pay', buyerToken)).body.order.status, 'in_escrow');
-  assert.equal((await act('dispatch', sellerToken, { carrier: 'DHL', trackingNumber: 'DHL1' })).body.order.status, 'dispatched');
+  assert.equal((await act('dispatch', sellerToken, { carrier: 'DHL Express', trackingNumber: 'x1' })).status, 400, 'implausible tracking number');
+  assert.equal((await act('dispatch', sellerToken, { carrier: 'DHL Express', trackingNumber: '12 3456 7890' })).body.order.status, 'dispatched');
+  const shipped = (await api('GET', `/orders/${order.id}`, undefined, buyerToken)).body.order;
+  assert.equal(shipped.trackingNumber, '1234567890', 'spaces are stripped');
+  assert.match(shipped.trackingUrl, /dhl\.com.*tracking-id=1234567890/, 'buyer gets a DHL tracking link');
   assert.equal((await act('confirm_delivery', buyerToken)).body.order.status, 'delivered');
 
   // Dispute → admin resolves in seller's favour
@@ -139,13 +143,13 @@ test('full marketplace lifecycle: onboarding → listing → escrow → payout',
 
   // Payouts: balance-limited; only super-admin can process
   const bal = (await api('GET', '/vendor/payouts', undefined, sellerToken)).body.balance;
-  assert.equal(bal.availableCents, 120_000 - 12_000);
+  assert.equal(bal.availableCents, 120_000 - 15_000, '15% commission on the $1,000 price, none on shipping');
   assert.equal((await api('POST', '/vendor/payouts', { amountCents: bal.availableCents + 1, method: 'wire', destination: 'FR76 0000' }, sellerToken)).status, 400);
   const payout = (await api('POST', '/vendor/payouts', { amountCents: 50_000, method: 'wire', destination: 'FR76 0000' }, sellerToken)).body.payout;
   assert.equal((await api('PATCH', `/admin/payouts/${payout.id}`, { status: 'approved' }, modToken)).status, 403);
   const adminToken = await login('admin@t.io');
   assert.equal((await api('PATCH', `/admin/payouts/${payout.id}`, { status: 'approved' }, adminToken)).status, 200);
-  assert.equal((await api('PATCH', `/admin/payouts/${payout.id}`, { status: 'paid' }, adminToken)).body.balance.availableCents, 58_000);
+  assert.equal((await api('PATCH', `/admin/payouts/${payout.id}`, { status: 'paid' }, adminToken)).body.balance.availableCents, 55_000);
 
   // Audit trail captured the sensitive actions
   const logs = (await api('GET', '/admin/audit', undefined, modToken)).body.logs.map((l: any) => l.action);

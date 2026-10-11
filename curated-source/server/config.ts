@@ -20,7 +20,7 @@ export const config = {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean),
-  commissionRate: Number(env.PLATFORM_COMMISSION ?? 0.12),
+  commissionRate: Number(env.PLATFORM_COMMISSION ?? 0.15),
   // Highest price allowed per work, and per buyer with one gallery over 90 days (linked purchases).
   // US$10,000 stays below the €10,000 threshold at which UK Art Market Participant AML rules apply.
   maxPriceCents: Math.round(Number(env.MAX_PRICE_USD ?? 10_000) * 100),

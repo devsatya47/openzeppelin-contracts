@@ -25,6 +25,6 @@ services:
       - key: AUTO_SEED_DEMO
         value: "true"
       - key: PLATFORM_COMMISSION
-        value: "0.12"
+        value: "0.15"
       - key: MAX_PRICE_USD
         value: "10000"
