@@ -46,6 +46,8 @@ export default function Settings() {
   const { user, setSession } = useAuth();
   const staff = user?.role === 'subadmin' || user?.role === 'superadmin';
   const minLength = staff ? 12 : 8;
+  const hasPassword = user?.passwordSet !== false;
+  const connected = [user?.connected?.google && 'Google', user?.connected?.facebook && 'Facebook'].filter(Boolean).join(' and ');
 
   const [profile, setProfile] = useState({ name: user?.name ?? '', country: user?.country ?? 'US' });
   const [emailForm, setEmailForm] = useState({ newEmail: '', currentPassword: '' });
@@ -82,6 +84,10 @@ export default function Settings() {
           </form>
         </Card>
 
+        {connected && (
+          <Notice>You can also sign in with {connected}.</Notice>
+        )}
+
         <Card title="Email address" description="Used to sign in and for messages about your orders. Use an address you check regularly.">
           <form
             className="space-y-5"
@@ -92,6 +98,7 @@ export default function Settings() {
             })}
           >
             <p className="text-sm text-mute">Current: <span className="text-bone">{user.email}</span></p>
+            {!hasPassword && <p className="text-sm text-warn">Set a password below first. Changing your email needs it.</p>}
             <Field label="New email">
               <input type="email" value={emailForm.newEmail} onChange={(ev) => setEmailForm({ ...emailForm, newEmail: ev.target.value })} className="field" required autoComplete="email" />
             </Field>
@@ -105,8 +112,12 @@ export default function Settings() {
         </Card>
 
         <Card
-          title="Password"
-          description={`At least ${minLength} characters${staff ? ' for admin accounts' : ''}. A long passphrase from a password manager is best. Changing it signs you out on every other device.`}
+          title={hasPassword ? 'Password' : 'Set a password'}
+          description={
+            hasPassword
+              ? `At least ${minLength} characters${staff ? ' for admin accounts' : ''}. A long passphrase from a password manager is best. Changing it signs you out on every other device.`
+              : `You signed up with ${connected || 'a social account'}. Add a password if you'd also like to sign in with your email (at least ${minLength} characters).`
+          }
         >
           <form
             className="space-y-5"
@@ -119,9 +130,11 @@ export default function Settings() {
               setPw({ currentPassword: '', newPassword: '', confirm: '' });
             })}
           >
-            <Field label="Current password">
-              <input type="password" value={pw.currentPassword} onChange={(ev) => setPw({ ...pw, currentPassword: ev.target.value })} className="field" required autoComplete="current-password" />
-            </Field>
+            {hasPassword && (
+              <Field label="Current password">
+                <input type="password" value={pw.currentPassword} onChange={(ev) => setPw({ ...pw, currentPassword: ev.target.value })} className="field" required autoComplete="current-password" />
+              </Field>
+            )}
             <Field label="New password">
               <input type="password" value={pw.newPassword} onChange={(ev) => setPw({ ...pw, newPassword: ev.target.value })} className="field" required minLength={minLength} autoComplete="new-password" />
             </Field>
@@ -129,8 +142,8 @@ export default function Settings() {
               <input type="password" value={pw.confirm} onChange={(ev) => setPw({ ...pw, confirm: ev.target.value })} className="field" required minLength={minLength} autoComplete="new-password" />
             </Field>
             <ErrorNote error={w.error} />
-            {w.done && <Notice tone="ok">Password changed. Other devices have been signed out.</Notice>}
-            <button className="btn-gold btn-sm" disabled={w.busy}>Change password</button>
+            {w.done && <Notice tone="ok">Password saved. Other devices have been signed out.</Notice>}
+            <button className="btn-gold btn-sm" disabled={w.busy}>{hasPassword ? 'Change password' : 'Set password'}</button>
           </form>
         </Card>
       </div>

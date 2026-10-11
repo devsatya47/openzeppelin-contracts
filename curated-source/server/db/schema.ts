@@ -21,6 +21,11 @@ export const users = sqliteTable('users', {
   lockedUntil: text('locked_until'),
   // Sessions (JWTs) issued before this moment are rejected, so changing a password signs out other devices.
   passwordChangedAt: text('password_changed_at'),
+  // Social sign-in: provider account ids. passwordSet is false for accounts created through Google/Facebook
+  // until the user chooses a password in Account settings.
+  googleSub: text('google_sub').unique(),
+  facebookId: text('facebook_id').unique(),
+  passwordSet: integer('password_set', { mode: 'boolean' }).notNull().default(true),
   ...timestamps,
 });
 

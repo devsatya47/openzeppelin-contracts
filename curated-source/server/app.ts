@@ -11,6 +11,7 @@ import { POLICIES_VERSION } from './lib/legal';
 import { renderShell } from './lib/seo';
 import { errorHandler, notFoundHandler } from './lib/errors';
 import { authRouter } from './routes/auth';
+import { enabledProviders, oauthRouter } from './routes/oauth';
 import { catalogRouter } from './routes/catalog';
 import { ordersRouter } from './routes/orders';
 import { vendorRouter } from './routes/vendor';
@@ -61,8 +62,10 @@ export function createApp() {
       policiesVersion: POLICIES_VERSION,
       maxPriceCents: config.maxPriceCents,
       showDemoLogins: config.showDemoLogins,
+      oauthProviders: enabledProviders(),
     }),
   );
+  api.use('/auth/oauth', oauthRouter);
   api.use('/auth', authRouter);
   api.use('/orders', ordersRouter);
   api.use('/vendor', vendorRouter);

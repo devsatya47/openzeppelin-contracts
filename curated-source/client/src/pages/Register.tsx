@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Page } from '../components/Layout';
 import { ErrorNote, Field } from '../components/ui';
+import { SocialSignIn } from '../components/SocialSignIn';
 import { useAuth } from '../lib/auth';
 import { COUNTRIES } from '../lib/format';
 import { useDocumentTitle } from '../lib/hooks';
@@ -35,6 +36,7 @@ export default function Register() {
       <form onSubmit={submit} className="w-full max-w-md space-y-5">
         <div className="eyebrow mb-4 text-center">Join the collectors</div>
         <h1 className="mb-10 text-center text-5xl">Create account</h1>
+        <SocialSignIn next={params.get('next')} />
         <Field label="Full name"><input value={form.name} onChange={set('name')} className="field" autoComplete="name" required minLength={2} /></Field>
         <Field label="Email"><input type="email" value={form.email} onChange={set('email')} className="field" autoComplete="email" required /></Field>
         <Field label="Password" hint="At least 8 characters"><input type="password" value={form.password} onChange={set('password')} className="field" autoComplete="new-password" required minLength={8} /></Field>

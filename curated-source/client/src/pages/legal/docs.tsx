@@ -579,6 +579,7 @@ const privacy: LegalDoc = {
       body: (
         <ul>
           <li><strong>Account details:</strong> your name, email address, country and password (stored only in encrypted, hashed form).</li>
+          <li><strong>Google or Facebook sign-in:</strong> if you choose it, we receive your name, email address and an account identifier from that provider. We never receive your Google or Facebook password.</li>
           <li><strong>Orders:</strong> the works you buy, delivery addresses, order history, and messages linked to orders and disputes.</li>
           <li><strong>Galleries:</strong> gallery profile details, listings, uploaded images, and payout and verification details held by our payment provider.</li>
           <li><strong>Content you post:</strong> questions, answers and reviews.</li>
@@ -615,7 +616,7 @@ const privacy: LegalDoc = {
         <ul>
           <li><strong>The Gallery you buy from</strong> receives your name, delivery address and order details so it can ship your work.</li>
           <li><strong>Buyers</strong> who purchase from a gallery see the gallery’s public profile and the shipping details it provides.</li>
-          <li><strong>Service providers</strong> who run the site for us: Stripe (payments), Render (hosting), carriers chosen by Galleries, and Google Fonts (which receives your IP address when fonts load).</li>
+          <li><strong>Service providers</strong> who run the site for us: Stripe (payments), Render (hosting), carriers chosen by Galleries, and Google Fonts (which receives your IP address when fonts load). If you sign in with Google or Facebook, that provider knows you used it to sign in to {SITE.name}.</li>
           <li><strong>Authorities</strong>, where the law requires it.</li>
         </ul>
       ),

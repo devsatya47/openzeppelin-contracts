@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Page } from '../components/Layout';
 import { ErrorNote, Field } from '../components/ui';
+import { SocialSignIn } from '../components/SocialSignIn';
 import { useAuth } from '../lib/auth';
 import { useDocumentTitle, usePlatformConfig } from '../lib/hooks';
 
@@ -43,6 +44,8 @@ export default function Login() {
       <div className="w-full max-w-md">
         <div className="eyebrow mb-4 text-center">Welcome back</div>
         <h1 className="mb-10 text-center text-5xl">Sign in</h1>
+        {params.get('error') && <div className="mb-6"><ErrorNote error={params.get('error')} /></div>}
+        <div className="mb-5"><SocialSignIn next={params.get('next')} /></div>
         <form onSubmit={submit} className="space-y-5">
           <Field label="Email"><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="field" autoComplete="email" required /></Field>
           <Field label="Password"><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="field" autoComplete="current-password" required /></Field>

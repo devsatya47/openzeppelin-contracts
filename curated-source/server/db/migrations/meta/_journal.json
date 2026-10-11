@@ -15,6 +15,13 @@
       "when": 1791720680545,
       "tag": "0001_account_security",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791721845805,
+      "tag": "0002_social_login",
+      "breakpoints": true
     }
   ]
 }

@@ -12,12 +12,15 @@ process.env.DATABASE_PATH = path.join(tmp, 'test.db');
 process.env.UPLOAD_DIR = path.join(tmp, 'uploads');
 process.env.MAX_FAILED_LOGINS = '5';
 process.env.MAX_FAILED_LOGINS_PER_IP = '1000';
+process.env.GOOGLE_CLIENT_ID = 'test-client';
+process.env.GOOGLE_CLIENT_SECRET = 'test-secret';
 
 const { db } = await import('../db/client');
 const { runMigrations } = await import('../db/migrate');
 const { createApp } = await import('../app');
 const { users, categories } = await import('../db/schema');
 const { hashPassword } = await import('../lib/auth');
+const { setOAuthHttp } = await import('../routes/oauth');
 
 let server: Server;
 let base = '';
@@ -203,6 +206,60 @@ test('account security: password and email changes, session revocation, lockout'
   assert.ok(listed.lockedUntil, 'admins can see the lock');
   assert.equal((await api('PATCH', `/admin/users/${listed.id}`, { unlock: true }, admin)).status, 200);
   assert.equal((await api('POST', '/auth/login', { email: 'bea@t.io', password: 'NewPassword#2' })).status, 200);
+});
+
+test('Google sign-in: sign up, sign in again, link by email, staff refused, state checked', async () => {
+  // Play Google's part: every authorization code maps to a Google profile.
+  const profiles: Record<string, object> = {
+    newbie: { sub: 'g-1', email: 'Newbie@Gmail.com', email_verified: true, name: 'New Collector' },
+    seller: { sub: 'g-2', email: 'seller@t.io', email_verified: true, name: 'Sam' },
+    staff: { sub: 'g-3', email: 'admin@t.io', email_verified: true, name: 'Admin' },
+  };
+  setOAuthHttp((async (url: string, init?: RequestInit) => {
+    const reply = (body: object) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+    if (String(url).startsWith('https://oauth2.googleapis.com/token')) {
+      const code = new URLSearchParams(String(init?.body)).get('code')!;
+      return reply({ access_token: `at-${code}` });
+    }
+    const code = String((init?.headers as Record<string, string>).authorization).replace('Bearer at-', '');
+    return reply(profiles[code]);
+  }) as typeof fetch);
+
+  const signIn = async (code: string, opts: { tamper?: boolean } = {}) => {
+    const start = await fetch(`${base}/api/auth/oauth/google/start?next=/vendor`, { redirect: 'manual' });
+    const google = new URL(start.headers.get('location')!);
+    assert.equal(google.host, 'accounts.google.com');
+    assert.equal(google.searchParams.get('redirect_uri'), `${base}/api/auth/oauth/google/callback`);
+    const cookie = start.headers.get('set-cookie')!.split(';')[0];
+    const state = opts.tamper ? 'forged' : google.searchParams.get('state')!;
+    const cb = await fetch(`${base}/api/auth/oauth/google/callback?code=${code}&state=${state}`, { redirect: 'manual', headers: { cookie } });
+    const location = cb.headers.get('location')!;
+    const fragment = new URLSearchParams(location.split('#')[1] ?? '');
+    return { location, token: fragment.get('token'), next: fragment.get('next') };
+  };
+
+  assert.deepEqual((await api('GET', '/config')).body.oauthProviders, ['google']);
+
+  const first = await signIn('newbie');
+  assert.ok(first.location.startsWith('/auth/complete#'), first.location);
+  assert.equal(first.next, '/vendor');
+  const me = (await api('GET', '/auth/me', undefined, first.token!)).body.user;
+  assert.equal(me.email, 'newbie@gmail.com');
+  assert.equal(me.passwordSet, false);
+  assert.equal(me.connected.google, true);
+  assert.equal((await signIn('newbie')).token ? 'ok' : 'missing', 'ok', 'returning user signs straight in');
+
+  // Google-only users choose a first password without knowing a current one.
+  assert.equal((await api('POST', '/auth/change-password', { newPassword: 'Gallery-Lover-9' }, first.token!)).status, 200);
+  assert.equal((await api('POST', '/auth/login', { email: 'newbie@gmail.com', password: 'Gallery-Lover-9' })).status, 200);
+
+  const linked = await signIn('seller');
+  assert.equal((await api('GET', '/auth/me', undefined, linked.token!)).body.user.role, 'seller', 'existing account is linked by email');
+
+  const staff = await signIn('staff');
+  assert.match(decodeURIComponent(staff.location), /Admin accounts must sign in with email and password/);
+  const forged = await signIn('newbie', { tamper: true });
+  assert.match(decodeURIComponent(forged.location), /session expired/);
 });
 
 test('RBAC guards', async () => {

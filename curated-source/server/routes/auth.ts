@@ -29,7 +29,17 @@ const registerSchema = z.object({
 
 function profile(userId: number) {
   const user = db
-    .select({ id: users.id, email: users.email, name: users.name, role: users.role, country: users.country, createdAt: users.createdAt })
+    .select({
+      id: users.id,
+      email: users.email,
+      name: users.name,
+      role: users.role,
+      country: users.country,
+      createdAt: users.createdAt,
+      passwordSet: users.passwordSet,
+      googleSub: users.googleSub,
+      facebookId: users.facebookId,
+    })
     .from(users)
     .where(eq(users.id, userId))
     .get()!;
@@ -39,7 +49,8 @@ function profile(userId: number) {
       .from(galleries)
       .where(eq(galleries.ownerId, userId))
       .get() ?? null;
-  return { ...user, gallery, permissions: permissionsFor(user.role) };
+  const { googleSub, facebookId, ...rest } = user;
+  return { ...rest, gallery, permissions: permissionsFor(user.role), connected: { google: !!googleSub, facebook: !!facebookId } };
 }
 
 const lockedMessage = (until: string) =>
@@ -117,12 +128,16 @@ authRouter.post('/change-email', requireAuth, async (req, res) => {
 
 authRouter.post('/change-password', requireAuth, async (req, res) => {
   const user = currentUser(req);
-  const body = z.object({ currentPassword: z.string(), newPassword: passwordFor(user.role) }).parse(req.body);
-  await confirmPassword(user.id, body.currentPassword);
-  if (body.currentPassword === body.newPassword) throw badRequest('Choose a password you have not used here before');
+  const body = z.object({ currentPassword: z.string().default(''), newPassword: passwordFor(user.role) }).parse(req.body);
+  // Accounts created with Google/Facebook have no password yet; they set their first one without it.
+  const hasPassword = db.select({ set: users.passwordSet }).from(users).where(eq(users.id, user.id)).get()?.set ?? true;
+  if (hasPassword) {
+    await confirmPassword(user.id, body.currentPassword);
+    if (body.currentPassword === body.newPassword) throw badRequest('Choose a password you have not used here before');
+  }
   const changedAt = new Date().toISOString();
   db.update(users)
-    .set({ passwordHash: await hashPassword(body.newPassword), passwordChangedAt: changedAt, failedLoginCount: 0, lockedUntil: null })
+    .set({ passwordHash: await hashPassword(body.newPassword), passwordSet: true, passwordChangedAt: changedAt, failedLoginCount: 0, lockedUntil: null })
     .where(eq(users.id, user.id))
     .run();
   audit(req, 'user.password_changed', 'user', user.id);

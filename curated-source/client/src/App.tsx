@@ -12,6 +12,7 @@ import NotFound from './pages/NotFound';
 const GalleryPage = lazyPage(() => import('./pages/GalleryPage'));
 const Galleries = lazyPage(() => import('./pages/Galleries'));
 const Login = lazyPage(() => import('./pages/Login'));
+const AuthComplete = lazyPage(() => import('./pages/AuthComplete'));
 const Register = lazyPage(() => import('./pages/Register'));
 const Checkout = lazyPage(() => import('./pages/Checkout'));
 const Orders = lazyPage(() => import('./pages/account/Orders'));
@@ -46,6 +47,7 @@ export function App() {
           <Route path="galleries/:slug" element={<GalleryPage />} />
           <Route path="login" element={<Login />} />
           <Route path="register" element={<Register />} />
+          <Route path="auth/complete" element={<AuthComplete />} />
           <Route path="sell" element={<Sell />} />
           <Route path="checkout/:listingId" element={<Guard permission="order:create"><Checkout /></Guard>} />
           <Route path="account/orders" element={<Guard><Orders /></Guard>} />

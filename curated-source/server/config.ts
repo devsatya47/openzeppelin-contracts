@@ -28,6 +28,12 @@ export const config = {
   maxFailedLogins: Number(env.MAX_FAILED_LOGINS ?? 50),
   maxFailedLoginsPerIp: Number(env.MAX_FAILED_LOGINS_PER_IP ?? env.MAX_FAILED_LOGINS ?? 50),
   loginLockHours: Number(env.LOGIN_LOCK_HOURS ?? 48),
+  // Canonical public address, used to build OAuth redirect URLs (e.g. https://www.curated-art.shop).
+  publicUrl: (env.PUBLIC_URL ?? '').replace(/\/$/, ''),
+  oauth: {
+    google: { clientId: env.GOOGLE_CLIENT_ID ?? '', clientSecret: env.GOOGLE_CLIENT_SECRET ?? '' },
+    facebook: { appId: env.FACEBOOK_APP_ID ?? '', appSecret: env.FACEBOOK_APP_SECRET ?? '' },
+  },
   // One-click demo sign-in buttons on the login page. Off in production unless explicitly enabled.
   showDemoLogins: env.SHOW_DEMO_LOGINS ? env.SHOW_DEMO_LOGINS === 'true' : !isProd,
   // Load the demo catalogue on boot when the database is empty (used for one-click hosted deployments).

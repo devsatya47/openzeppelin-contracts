@@ -107,6 +107,22 @@ Set `AUTO_SEED_DEMO=true` to have the server load the demo data itself on first 
 - **Demo sign-in buttons** are hidden in production unless `SHOW_DEMO_LOGINS=true`.
 - **First thing after deploying a seeded site:** sign in as each staff account and change its email and password. The demo passwords are public.
 
+## Social sign-in (Google, Facebook)
+
+"Continue with Google / Facebook" uses the OAuth authorization-code flow (`server/routes/oauth.ts`).
+- **Buttons:** they appear only when a provider's credentials are set.
+- **Existing accounts:** an existing account with the same verified email is linked.
+- **Admin accounts** are refused and must use email and password.
+- **Accounts created this way** can set a password in Account settings.
+
+Callback URLs to register with each provider:
+- Google: `https://www.curated-art.shop/api/auth/oauth/google/callback`
+- Facebook: `https://www.curated-art.shop/api/auth/oauth/facebook/callback`
+
+Environment: `PUBLIC_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`.
+
+Instagram is not offered: Meta retired Instagram sign-in for personal accounts in December 2024.
+
 ## RBAC
 
 Permissions are declared in one matrix (`server/lib/rbac.ts`) and enforced by `requirePermission()` on every route. The client hides UI the same way, but the server is the source of truth.
