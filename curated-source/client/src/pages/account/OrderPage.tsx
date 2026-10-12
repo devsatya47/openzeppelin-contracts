@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ShieldCheck } from 'lucide-react';
+import { ExternalLink, ShieldCheck, Truck } from 'lucide-react';
+import { CARRIERS } from '../../../../shared/carriers';
 import { ArtFrame } from '../../components/ArtFrame';
 import { EscrowTimeline } from '../../components/EscrowTimeline';
 import { Page } from '../../components/Layout';
@@ -55,7 +56,8 @@ export default function OrderPage() {
   const [params] = useSearchParams();
   const { data, loading, error, reload } = useApi<{ order: OrderDetail }>(`/orders/${id}`);
   const [modal, setModal] = useState<OrderAction | null>(null);
-  const [input, setInput] = useState({ carrier: '', trackingNumber: '', reason: '', note: '' });
+  const [input, setInput] = useState({ carrierId: 'dhl', otherCarrier: '', trackingNumber: '', reason: '', note: '' });
+  const carrier = CARRIERS.find((c) => c.id === input.carrierId)!;
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<unknown>(null);
   useDocumentTitle(data ? `Order ${data.order.reference}` : 'Order');
@@ -76,7 +78,7 @@ export default function OrderPage() {
     try {
       const body =
         meta.modal === 'dispatch'
-          ? { carrier: input.carrier, trackingNumber: input.trackingNumber }
+          ? { carrier: carrier.id === 'other' ? input.otherCarrier : carrier.name, trackingNumber: input.trackingNumber }
           : meta.modal === 'reason'
             ? { reason: input.reason }
             : meta.modal === 'note' && input.note
@@ -127,6 +129,11 @@ export default function OrderPage() {
             <section className="border border-gold/30 bg-gold/[0.03] p-6">
               {hint && <p className="mb-5 text-sm text-bone">{hint}</p>}
               <div className="flex flex-wrap gap-3">
+                {o.trackingUrl && o.status === 'dispatched' && (
+                  <a href={o.trackingUrl} target="_blank" rel="noopener noreferrer" className="btn-outline">
+                    <Truck size={14} /> Track shipment <ExternalLink size={12} />
+                  </a>
+                )}
                 {o.actions.map((a) => (
                   <button key={a} onClick={() => run(a)} disabled={busy} className={ACTIONS[a].style}>{ACTIONS[a].label}</button>
                 ))}
@@ -218,6 +225,11 @@ export default function OrderPage() {
                 <div className="text-[10px] uppercase tracking-[0.2em] text-faint">Tracking</div>
                 <div className="mt-1 text-bone">{o.carrier}</div>
                 <div className="font-mono text-xs text-gold">{o.trackingNumber}</div>
+                {o.trackingUrl && (
+                  <a href={o.trackingUrl} target="_blank" rel="noopener noreferrer" className="btn-gold btn-sm mt-4 w-full">
+                    <Truck size={12} /> Track shipment <ExternalLink size={11} />
+                  </a>
+                )}
               </div>
             )}
           </div>
@@ -244,8 +256,29 @@ export default function OrderPage() {
         >
           {modal && ACTIONS[modal].modal === 'dispatch' && (
             <>
-              <Field label="Carrier"><input value={input.carrier} onChange={(e) => setInput({ ...input, carrier: e.target.value })} className="field" placeholder="e.g. DHL Express, FedEx, Momart" required /></Field>
-              <Field label="Tracking number"><input value={input.trackingNumber} onChange={(e) => setInput({ ...input, trackingNumber: e.target.value })} className="field" required /></Field>
+              <Field label="Carrier">
+                <select value={input.carrierId} onChange={(e) => setInput({ ...input, carrierId: e.target.value })} className="field">
+                  {CARRIERS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </Field>
+              {carrier.id === 'other' && (
+                <Field label="Carrier name">
+                  <input value={input.otherCarrier} onChange={(e) => setInput({ ...input, otherCarrier: e.target.value })} className="field" placeholder="e.g. Momart, Crown Fine Art" required />
+                </Field>
+              )}
+              <Field
+                label="Tracking number"
+                hint={carrier.trackUrl ? `${carrier.hint}. The buyer gets a link to follow the parcel on the ${carrier.name} website.` : `${carrier.hint}. Share any tracking link with the buyer in a note.`}
+              >
+                <input
+                  value={input.trackingNumber}
+                  onChange={(e) => setInput({ ...input, trackingNumber: e.target.value })}
+                  className="field font-mono uppercase"
+                  required
+                  pattern="[A-Za-z0-9\s\-]{6,50}"
+                  title="Letters, digits and dashes, as printed on the shipping label"
+                />
+              </Field>
             </>
           )}
           {modal && ACTIONS[modal].modal === 'reason' && (
@@ -259,7 +292,7 @@ export default function OrderPage() {
             </Field>
           )}
           <ErrorNote error={actionError} />
-          <button className="btn-gold w-full" disabled={busy}>{busy ? 'Working…' : 'Confirm'}</button>
+          <button className="btn-gold w-full" disabled={busy}>{busy ? 'Working…' : modal === 'dispatch' ? 'Confirm dispatch' : modal === 'dispute' ? 'Open dispute' : 'Confirm'}</button>
         </form>
       </Modal>
     </Page>

@@ -3,6 +3,7 @@ import { MapPin } from 'lucide-react';
 import { Page } from '../components/Layout';
 import { ListingGrid } from '../components/ListingCard';
 import { Empty, Spinner, Stars } from '../components/ui';
+import { ShareButton } from '../components/ShareButton';
 import NotFound from './NotFound';
 import { mediaUrl } from '../lib/api';
 import { date } from '../lib/format';
@@ -36,6 +37,9 @@ export default function GalleryPage() {
               <Stars value={g.rating} /> {g.rating.toFixed(1)} · {g.reviewCount} collector review{g.reviewCount === 1 ? '' : 's'}
             </div>
           )}
+          <div className="mt-6">
+            <ShareButton path={`/galleries/${slug}`} title={g.name} text={g.tagline} image={g.coverUrl} label="Share gallery" />
+          </div>
         </Page>
       </section>
       <Page className="py-16">

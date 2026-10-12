@@ -10,6 +10,7 @@ import { hydrateListing, hydrateListings } from '../lib/listings';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors';
 import { orderReference, shippingFor } from '../lib/util';
 import { audit } from '../lib/audit';
+import { trackingUrl } from '../../shared/carriers';
 import { acceptTermsSchema, POLICIES_VERSION } from '../lib/legal';
 
 export const ordersRouter = Router();
@@ -155,6 +156,7 @@ ordersRouter.get('/:id', requireAuth, (req, res) => {
       ledger,
       dispute,
       review,
+      trackingUrl: trackingUrl(order.carrier, order.trackingNumber),
       roles: actors,
       actions: availableActions(user, order),
       canReview: actors.includes('buyer') && !review && ['delivered', 'released'].includes(order.status),

@@ -49,5 +49,8 @@ export async function api<T = any>(path: string, init: { method?: string; body?:
   return data as T;
 }
 
+/** Absolute URL of an API endpoint, for full-page navigations such as social sign-in. */
+export const apiUrl = (path: string) => `${API_BASE}/api${path}`;
+
 /** Upload URLs are relative to the API origin, which may differ from the SPA host. */
 export const mediaUrl = (u: string | null | undefined) => (!u ? '' : u.startsWith('/uploads/') ? `${API_BASE}${u}` : u);

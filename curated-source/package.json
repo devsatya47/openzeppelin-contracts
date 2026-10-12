@@ -18,6 +18,7 @@
     "seed": "tsx server/db/seed.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx server/db/migrate-cli.ts",
+    "unlock-user": "tsx server/db/unlock-cli.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.server.json",
     "test": "node --import tsx --test server/test/*.test.ts"
   },

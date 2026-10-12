@@ -20,10 +20,22 @@ export const config = {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean),
-  commissionRate: Number(env.PLATFORM_COMMISSION ?? 0.12),
+  commissionRate: Number(env.PLATFORM_COMMISSION ?? 0.15),
   // Highest price allowed per work, and per buyer with one gallery over 90 days (linked purchases).
   // US$10,000 stays below the €10,000 threshold at which UK Art Market Participant AML rules apply.
   maxPriceCents: Math.round(Number(env.MAX_PRICE_USD ?? 10_000) * 100),
+  // Brute-force protection: after this many failed sign-ins, the account (and the sending IP) is blocked.
+  maxFailedLogins: Number(env.MAX_FAILED_LOGINS ?? 50),
+  maxFailedLoginsPerIp: Number(env.MAX_FAILED_LOGINS_PER_IP ?? env.MAX_FAILED_LOGINS ?? 50),
+  loginLockHours: Number(env.LOGIN_LOCK_HOURS ?? 48),
+  // Canonical public address, used to build OAuth redirect URLs (e.g. https://www.curated-art.shop).
+  publicUrl: (env.PUBLIC_URL ?? '').replace(/\/$/, ''),
+  oauth: {
+    google: { clientId: env.GOOGLE_CLIENT_ID ?? '', clientSecret: env.GOOGLE_CLIENT_SECRET ?? '' },
+    facebook: { appId: env.FACEBOOK_APP_ID ?? '', appSecret: env.FACEBOOK_APP_SECRET ?? '' },
+  },
+  // One-click demo sign-in buttons on the login page. Off in production unless explicitly enabled.
+  showDemoLogins: env.SHOW_DEMO_LOGINS ? env.SHOW_DEMO_LOGINS === 'true' : !isProd,
   // Load the demo catalogue on boot when the database is empty (used for one-click hosted deployments).
   autoSeedDemo: env.AUTO_SEED_DEMO === 'true',
   maxUploadBytes: 25 * 1024 * 1024,

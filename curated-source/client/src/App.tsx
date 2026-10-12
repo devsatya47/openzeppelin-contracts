@@ -1,26 +1,29 @@
-import { lazy, Suspense, type ReactNode } from 'react';
+import { Suspense, type ReactNode } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { Spinner } from './components/ui';
 import { useAuth } from './lib/auth';
+import { lazyPage } from './lib/lazy';
 import Home from './pages/Home';
 import Catalog from './pages/Catalog';
 import ListingPage from './pages/ListingPage';
 import NotFound from './pages/NotFound';
 
-const GalleryPage = lazy(() => import('./pages/GalleryPage'));
-const Galleries = lazy(() => import('./pages/Galleries'));
-const Login = lazy(() => import('./pages/Login'));
-const Register = lazy(() => import('./pages/Register'));
-const Checkout = lazy(() => import('./pages/Checkout'));
-const Orders = lazy(() => import('./pages/account/Orders'));
-const OrderPage = lazy(() => import('./pages/account/OrderPage'));
-const Sell = lazy(() => import('./pages/Sell'));
-const VendorDashboard = lazy(() => import('./pages/vendor/VendorDashboard'));
-const ListingEditor = lazy(() => import('./pages/vendor/ListingEditor'));
-const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'));
-const LegalPage = lazy(() => import('./pages/legal/LegalPage'));
-const Contact = lazy(() => import('./pages/Contact'));
+const GalleryPage = lazyPage(() => import('./pages/GalleryPage'));
+const Galleries = lazyPage(() => import('./pages/Galleries'));
+const Login = lazyPage(() => import('./pages/Login'));
+const AuthComplete = lazyPage(() => import('./pages/AuthComplete'));
+const Register = lazyPage(() => import('./pages/Register'));
+const Checkout = lazyPage(() => import('./pages/Checkout'));
+const Orders = lazyPage(() => import('./pages/account/Orders'));
+const OrderPage = lazyPage(() => import('./pages/account/OrderPage'));
+const Settings = lazyPage(() => import('./pages/account/Settings'));
+const Sell = lazyPage(() => import('./pages/Sell'));
+const VendorDashboard = lazyPage(() => import('./pages/vendor/VendorDashboard'));
+const ListingEditor = lazyPage(() => import('./pages/vendor/ListingEditor'));
+const AdminDashboard = lazyPage(() => import('./pages/admin/AdminDashboard'));
+const LegalPage = lazyPage(() => import('./pages/legal/LegalPage'));
+const Contact = lazyPage(() => import('./pages/Contact'));
 
 /** Client-side guard. The API enforces the same permissions server-side. */
 function Guard({ permission, children }: { permission?: string; children: ReactNode }) {
@@ -44,9 +47,11 @@ export function App() {
           <Route path="galleries/:slug" element={<GalleryPage />} />
           <Route path="login" element={<Login />} />
           <Route path="register" element={<Register />} />
+          <Route path="auth/complete" element={<AuthComplete />} />
           <Route path="sell" element={<Sell />} />
           <Route path="checkout/:listingId" element={<Guard permission="order:create"><Checkout /></Guard>} />
           <Route path="account/orders" element={<Guard><Orders /></Guard>} />
+          <Route path="account/settings" element={<Guard><Settings /></Guard>} />
           <Route path="orders/:id" element={<Guard><OrderPage /></Guard>} />
           <Route path="vendor" element={<Guard permission="listing:manage"><VendorDashboard /></Guard>} />
           <Route path="vendor/listings/new" element={<Guard permission="listing:manage"><ListingEditor /></Guard>} />

@@ -280,7 +280,7 @@ function PayoutsTab({ canProcess }: { canProcess: boolean }) {
 
 function UsersTab() {
   const [q, setQ] = useState('');
-  const { data, reload } = useApi<{ users: { id: number; name: string; email: string; role: Role; status: string; createdAt: string }[] }>(`/admin/users${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+  const { data, reload } = useApi<{ users: { id: number; name: string; email: string; role: Role; status: string; createdAt: string; lockedUntil: string | null }[] }>(`/admin/users${q ? `?q=${encodeURIComponent(q)}` : ''}`);
   const { error, run } = useAction(reload);
   const { user: me } = useAuth();
   return (
@@ -291,7 +291,7 @@ function UsersTab() {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[640px] text-sm">
             <thead className="border-b border-line text-left text-[10px] uppercase tracking-[0.18em] text-faint">
-              <tr><th className="py-3 font-normal">User</th><th className="font-normal">Joined</th><th className="font-normal">Role</th><th className="font-normal">Status</th></tr>
+              <tr><th className="py-3 font-normal">User</th><th className="font-normal">Joined</th><th className="font-normal">Role</th><th className="font-normal">Status</th><th /></tr>
             </thead>
             <tbody className="divide-y divide-line">
               {data.users.map((u) => (
@@ -307,6 +307,14 @@ function UsersTab() {
                     <button disabled={u.id === me?.id} onClick={() => run(() => api(`/admin/users/${u.id}`, { method: 'PATCH', body: { status: u.status === 'active' ? 'suspended' : 'active' } }))} className="disabled:opacity-40">
                       <StatusPill status={u.status === 'active' ? 'active' : 'suspended'} />
                     </button>
+                  </td>
+                  <td className="text-right">
+                    {u.lockedUntil && Date.parse(u.lockedUntil) > Date.now() && (
+                      <span className="inline-flex items-center gap-2">
+                        <span className="text-xs text-bad" title={`Locked until ${date(u.lockedUntil, true)}`}>Locked</span>
+                        <button onClick={() => run(() => api(`/admin/users/${u.id}`, { method: 'PATCH', body: { unlock: true } }))} className="btn-outline btn-sm">Unlock</button>
+                      </span>
+                    )}
                   </td>
                 </tr>
               ))}

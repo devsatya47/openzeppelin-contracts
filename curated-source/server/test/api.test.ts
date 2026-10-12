@@ -10,12 +10,17 @@ import sharp from 'sharp';
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'curated-test-'));
 process.env.DATABASE_PATH = path.join(tmp, 'test.db');
 process.env.UPLOAD_DIR = path.join(tmp, 'uploads');
+process.env.MAX_FAILED_LOGINS = '5';
+process.env.MAX_FAILED_LOGINS_PER_IP = '1000';
+process.env.GOOGLE_CLIENT_ID = 'test-client';
+process.env.GOOGLE_CLIENT_SECRET = 'test-secret';
 
 const { db } = await import('../db/client');
 const { runMigrations } = await import('../db/migrate');
 const { createApp } = await import('../app');
 const { users, categories } = await import('../db/schema');
 const { hashPassword } = await import('../lib/auth');
+const { setOAuthHttp } = await import('../routes/oauth');
 
 let server: Server;
 let base = '';
@@ -121,7 +126,11 @@ test('full marketplace lifecycle: onboarding → listing → escrow → payout',
   assert.equal((await act('dispatch', sellerToken, { carrier: 'DHL', trackingNumber: 'X' })).status, 400, 'cannot dispatch before payment');
   assert.equal((await act('pay', sellerToken)).status, 403, 'seller cannot pay for buyer');
   assert.equal((await act('pay', buyerToken)).body.order.status, 'in_escrow');
-  assert.equal((await act('dispatch', sellerToken, { carrier: 'DHL', trackingNumber: 'DHL1' })).body.order.status, 'dispatched');
+  assert.equal((await act('dispatch', sellerToken, { carrier: 'DHL Express', trackingNumber: 'x1' })).status, 400, 'implausible tracking number');
+  assert.equal((await act('dispatch', sellerToken, { carrier: 'DHL Express', trackingNumber: '12 3456 7890' })).body.order.status, 'dispatched');
+  const shipped = (await api('GET', `/orders/${order.id}`, undefined, buyerToken)).body.order;
+  assert.equal(shipped.trackingNumber, '1234567890', 'spaces are stripped');
+  assert.match(shipped.trackingUrl, /dhl\.com.*tracking-id=1234567890/, 'buyer gets a DHL tracking link');
   assert.equal((await act('confirm_delivery', buyerToken)).body.order.status, 'delivered');
 
   // Dispute → admin resolves in seller's favour
@@ -137,13 +146,13 @@ test('full marketplace lifecycle: onboarding → listing → escrow → payout',
 
   // Payouts: balance-limited; only super-admin can process
   const bal = (await api('GET', '/vendor/payouts', undefined, sellerToken)).body.balance;
-  assert.equal(bal.availableCents, 120_000 - 12_000);
+  assert.equal(bal.availableCents, 120_000 - 15_000, '15% commission on the $1,000 price, none on shipping');
   assert.equal((await api('POST', '/vendor/payouts', { amountCents: bal.availableCents + 1, method: 'wire', destination: 'FR76 0000' }, sellerToken)).status, 400);
   const payout = (await api('POST', '/vendor/payouts', { amountCents: 50_000, method: 'wire', destination: 'FR76 0000' }, sellerToken)).body.payout;
   assert.equal((await api('PATCH', `/admin/payouts/${payout.id}`, { status: 'approved' }, modToken)).status, 403);
   const adminToken = await login('admin@t.io');
   assert.equal((await api('PATCH', `/admin/payouts/${payout.id}`, { status: 'approved' }, adminToken)).status, 200);
-  assert.equal((await api('PATCH', `/admin/payouts/${payout.id}`, { status: 'paid' }, adminToken)).body.balance.availableCents, 58_000);
+  assert.equal((await api('PATCH', `/admin/payouts/${payout.id}`, { status: 'paid' }, adminToken)).body.balance.availableCents, 55_000);
 
   // Audit trail captured the sensitive actions
   const logs = (await api('GET', '/admin/audit', undefined, modToken)).body.logs.map((l: any) => l.action);
@@ -172,8 +181,96 @@ test('price cap: listings and linked purchases stay under the AML threshold', as
   assert.match(linked.body.error, /90 days/);
 });
 
+test('account security: password and email changes, session revocation, lockout', async () => {
+  const oldToken = await login('buyer@t.io');
+  assert.equal((await api('POST', '/auth/change-password', { currentPassword: 'wrong', newPassword: 'NewPassword#2' }, oldToken)).status, 400);
+  const changed = await api('POST', '/auth/change-password', { currentPassword: 'Password#1', newPassword: 'NewPassword#2' }, oldToken);
+  assert.equal(changed.status, 200);
+  assert.equal((await api('GET', '/auth/me', undefined, oldToken)).status, 401, 'old sessions are signed out');
+  assert.equal((await api('GET', '/auth/me', undefined, changed.body.token)).status, 200, 'the current session keeps working');
+
+  const moved = await api('POST', '/auth/change-email', { currentPassword: 'NewPassword#2', newEmail: 'bea@t.io' }, changed.body.token);
+  assert.equal(moved.body.user.email, 'bea@t.io');
+  assert.equal((await api('POST', '/auth/change-email', { currentPassword: 'NewPassword#2', newEmail: 'admin@t.io' }, changed.body.token)).status, 409);
+
+  // Staff need 12+ character passwords.
+  const mod = await login('mod@t.io');
+  assert.equal((await api('POST', '/auth/change-password', { currentPassword: 'Password#1', newPassword: 'Short#12' }, mod)).status, 400);
+
+  // Lockout after MAX_FAILED_LOGINS (5 in tests): even the right password is refused until unlocked.
+  for (let i = 0; i < 4; i++) assert.equal((await api('POST', '/auth/login', { email: 'bea@t.io', password: 'nope' })).status, 401);
+  assert.equal((await api('POST', '/auth/login', { email: 'bea@t.io', password: 'nope' })).status, 423);
+  assert.equal((await api('POST', '/auth/login', { email: 'bea@t.io', password: 'NewPassword#2' })).status, 423);
+  const admin = await login('admin@t.io');
+  const listed = (await api('GET', '/admin/users?q=bea', undefined, admin)).body.users[0];
+  assert.ok(listed.lockedUntil, 'admins can see the lock');
+  assert.equal((await api('PATCH', `/admin/users/${listed.id}`, { unlock: true }, admin)).status, 200);
+  assert.equal((await api('POST', '/auth/login', { email: 'bea@t.io', password: 'NewPassword#2' })).status, 200);
+});
+
+test('Google sign-in: sign up, sign in again, link by email, staff refused, state checked', async () => {
+  // Play Google's part: every authorization code maps to a Google profile.
+  const profiles: Record<string, object> = {
+    newbie: { sub: 'g-1', email: 'Newbie@Gmail.com', email_verified: true, name: 'New Collector' },
+    seller: { sub: 'g-2', email: 'seller@t.io', email_verified: true, name: 'Sam' },
+    staff: { sub: 'g-3', email: 'admin@t.io', email_verified: true, name: 'Admin' },
+  };
+  setOAuthHttp((async (url: string, init?: RequestInit) => {
+    const reply = (body: object) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+    if (String(url).startsWith('https://oauth2.googleapis.com/token')) {
+      const code = new URLSearchParams(String(init?.body)).get('code')!;
+      return reply({ access_token: `at-${code}` });
+    }
+    const code = String((init?.headers as Record<string, string>).authorization).replace('Bearer at-', '');
+    return reply(profiles[code]);
+  }) as typeof fetch);
+
+  const signIn = async (code: string, opts: { tamper?: boolean } = {}) => {
+    const start = await fetch(`${base}/api/auth/oauth/google/start?next=/vendor`, { redirect: 'manual' });
+    const google = new URL(start.headers.get('location')!);
+    assert.equal(google.host, 'accounts.google.com');
+    assert.equal(google.searchParams.get('redirect_uri'), `${base}/api/auth/oauth/google/callback`);
+    const cookie = start.headers.get('set-cookie')!.split(';')[0];
+    const state = opts.tamper ? 'forged' : google.searchParams.get('state')!;
+    const cb = await fetch(`${base}/api/auth/oauth/google/callback?code=${code}&state=${state}`, { redirect: 'manual', headers: { cookie } });
+    const location = cb.headers.get('location')!;
+    const fragment = new URLSearchParams(location.split('#')[1] ?? '');
+    return { location, token: fragment.get('token'), next: fragment.get('next') };
+  };
+
+  assert.deepEqual((await api('GET', '/config')).body.oauthProviders, ['google']);
+
+  const first = await signIn('newbie');
+  assert.ok(first.location.startsWith('/auth/complete#'), first.location);
+  assert.equal(first.next, '/vendor');
+  const me = (await api('GET', '/auth/me', undefined, first.token!)).body.user;
+  assert.equal(me.email, 'newbie@gmail.com');
+  assert.equal(me.passwordSet, false);
+  assert.equal(me.connected.google, true);
+  assert.equal((await signIn('newbie')).token ? 'ok' : 'missing', 'ok', 'returning user signs straight in');
+
+  // Google-only users choose a first password without knowing a current one.
+  assert.equal((await api('POST', '/auth/change-password', { newPassword: 'Gallery-Lover-9' }, first.token!)).status, 200);
+  assert.equal((await api('POST', '/auth/login', { email: 'newbie@gmail.com', password: 'Gallery-Lover-9' })).status, 200);
+
+  const linked = await signIn('seller');
+  assert.equal((await api('GET', '/auth/me', undefined, linked.token!)).body.user.role, 'seller', 'existing account is linked by email');
+
+  const staff = await signIn('staff');
+  assert.match(decodeURIComponent(staff.location), /Admin accounts must sign in with email and password/);
+  const forged = await signIn('newbie', { tamper: true });
+  assert.match(decodeURIComponent(forged.location), /session expired/);
+
+  // Visitors on another host name (e.g. without www) are first sent to PUBLIC_URL.
+  const { config } = await import('../config');
+  config.publicUrl = 'https://www.example-art.shop';
+  const hop = await fetch(`${base}/api/auth/oauth/google/start?next=/gallery`, { redirect: 'manual' });
+  assert.equal(hop.headers.get('location'), 'https://www.example-art.shop/api/auth/oauth/google/start?next=/gallery');
+  config.publicUrl = '';
+});
+
 test('RBAC guards', async () => {
-  const buyer = await login('buyer@t.io');
+  const buyer = (await api('POST', '/auth/login', { email: 'bea@t.io', password: 'NewPassword#2' })).body.token;
   assert.equal((await api('GET', '/admin/overview')).status, 401);
   assert.equal((await api('GET', '/admin/overview', undefined, buyer)).status, 403);
   const mod = await login('mod@t.io');

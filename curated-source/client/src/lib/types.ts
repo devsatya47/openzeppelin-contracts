@@ -8,6 +8,9 @@ export type User = {
   country: string;
   permissions: string[];
   gallery: { id: number; name: string; slug: string; status: GalleryStatus } | null;
+  /** False for accounts created with Google/Facebook that haven't chosen a password yet. */
+  passwordSet: boolean;
+  connected: { google: boolean; facebook: boolean };
 };
 
 export type GalleryStatus = 'pending' | 'approved' | 'rejected' | 'suspended';
@@ -104,6 +107,7 @@ export type Order = {
 };
 
 export type OrderDetail = Order & {
+  trackingUrl: string | null;
   gallery: { id: number; name: string; slug: string };
   buyer: { id: number; name: string; email: string };
   events: { id: number; status: OrderStatus; note: string | null; createdAt: string; actor: string | null }[];

@@ -209,7 +209,16 @@ adminRouter.patch('/listings/:id', requirePermission('listing:moderate'), (req, 
 adminRouter.get('/users', requirePermission('user:manage'), (req, res) => {
   const q = z.string().trim().max(80).optional().parse(req.query.q || undefined);
   const rows = db
-    .select({ id: users.id, name: users.name, email: users.email, role: users.role, status: users.status, country: users.country, createdAt: users.createdAt })
+    .select({
+      id: users.id,
+      name: users.name,
+      email: users.email,
+      role: users.role,
+      status: users.status,
+      country: users.country,
+      createdAt: users.createdAt,
+      lockedUntil: users.lockedUntil,
+    })
     .from(users)
     .where(q ? or(like(users.name, `%${q}%`), like(users.email, `%${q}%`)) : undefined)
     .orderBy(desc(users.createdAt))
@@ -219,15 +228,26 @@ adminRouter.get('/users', requirePermission('user:manage'), (req, res) => {
 });
 
 adminRouter.patch('/users/:id', requirePermission('user:manage'), (req, res) => {
-  const body = z.object({ role: z.enum(ROLES).optional(), status: z.enum(['active', 'suspended']).optional() }).parse(req.body);
+  const body = z
+    .object({ role: z.enum(ROLES).optional(), status: z.enum(['active', 'suspended']).optional(), unlock: z.literal(true).optional() })
+    .parse(req.body);
+  const { unlock, ...changes } = body;
   const target = db.select().from(users).where(eq(users.id, Number(req.params.id))).get();
   if (!target) throw notFound('User not found');
   if (target.id === currentUser(req).id) throw forbidden('You cannot change your own role or status');
   if (body.role === 'seller' && !db.select({ id: galleries.id }).from(galleries).where(eq(galleries.ownerId, target.id)).get()) {
     throw badRequest('Sellers need a gallery — ask the user to complete onboarding');
   }
-  const updated = db.update(users).set(body).where(eq(users.id, target.id)).returning({ id: users.id, role: users.role, status: users.status }).get();
-  audit(req, 'user.update', 'user', target.id, { from: { role: target.role, status: target.status }, to: body });
+  const updated = db
+    .update(users)
+    .set({ ...changes, ...(unlock ? { lockedUntil: null, failedLoginCount: 0 } : {}) })
+    .where(eq(users.id, target.id))
+    .returning({ id: users.id, role: users.role, status: users.status, lockedUntil: users.lockedUntil })
+    .get();
+  if (unlock) audit(req, 'user.unlocked', 'user', target.id);
+  if (Object.keys(changes).length) {
+    audit(req, 'user.update', 'user', target.id, { from: { role: target.role, status: target.status }, to: changes });
+  }
   res.json({ user: updated });
 });
 

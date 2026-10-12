@@ -28,12 +28,12 @@ export function useApi<T>(path: string | null) {
   return { data, error, loading, reload, setData };
 }
 
-export type PlatformConfig = { commissionRate: number; policiesVersion: string; maxPriceCents: number };
+export type PlatformConfig = { commissionRate: number; policiesVersion: string; maxPriceCents: number; showDemoLogins: boolean; oauthProviders: ('google' | 'facebook')[] };
 
 /** Commission, policy version and price cap published by the API (with safe defaults while loading). */
 export function usePlatformConfig(): PlatformConfig {
   const { data } = useApi<PlatformConfig>('/config');
-  return data ?? { commissionRate: 0.12, policiesVersion: '', maxPriceCents: 1_000_000 };
+  return data ?? { commissionRate: 0.15, policiesVersion: '', maxPriceCents: 1_000_000, showDemoLogins: false, oauthProviders: [] };
 }
 
 export function useDebounced<T>(value: T, ms = 220) {

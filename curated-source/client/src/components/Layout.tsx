@@ -71,6 +71,7 @@ function AccountMenu() {
             <div className="text-[10px] uppercase tracking-[0.2em] text-gold">{user.role.replace('superadmin', 'super-admin').replace('subadmin', 'sub-admin')}</div>
           </div>
           <MenuLink to="/account/orders">My acquisitions</MenuLink>
+          <MenuLink to="/account/settings">Account settings</MenuLink>
           {isSeller ? <MenuLink to="/vendor">Vendor portal</MenuLink> : user.role === 'buyer' && <MenuLink to="/sell">Open a gallery</MenuLink>}
           {isAdmin && <MenuLink to="/admin">Admin control panel</MenuLink>}
           <button
