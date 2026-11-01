@@ -55,6 +55,19 @@ export function createApp() {
   // Slow down mass sign-ups and password-change guessing.
   const writeLimiter = rateLimit({ windowMs: 15 * 60_000, limit: config.isProd ? 30 : 1000, standardHeaders: true, legacyHeaders: false });
   api.post(['/auth/register', '/auth/change-password', '/auth/change-email'], writeLimiter);
+  // Browser crash reports from the web app's error boundary; they appear in the server log (Render → Logs).
+  api.post(
+    '/client-errors',
+    rateLimit({ windowMs: 60_000, limit: 20, standardHeaders: true, legacyHeaders: false }),
+    (req, res) => {
+      const b = (req.body ?? {}) as Record<string, unknown>;
+      const clip = (v: unknown, n: number) => String(v ?? '').slice(0, n);
+      console.error(
+        `[client-error] ${clip(b.where, 30)} ${clip(b.url, 300)} :: ${clip(b.message, 500)} :: ua=${clip(req.get('user-agent'), 200)}\n${clip(b.stack, 2000)}`,
+      );
+      res.status(204).end();
+    },
+  );
   api.get('/health', (_req, res) => void res.json({ ok: true, time: new Date().toISOString() }));
   api.get('/config', (_req, res) =>
     void res.json({

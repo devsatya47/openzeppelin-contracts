@@ -1,27 +1,56 @@
 import { Component, type ReactNode } from 'react';
+import { isChunkLoadError, reportError } from '../lib/errorReport';
 
-/** Last-resort screen so a crash never leaves visitors staring at a blank page. */
-export class ErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
-  state = { failed: false };
+const RELOAD_KEY = 'cs_error_reload_at';
 
-  static getDerivedStateFromError() {
-    return { failed: true };
+/** Reload at most once a minute, so a persistent failure can't cause a reload loop. */
+function reloadOnce() {
+  try {
+    const last = Number(sessionStorage.getItem(RELOAD_KEY) ?? 0);
+    if (Date.now() - last < 60_000) return false;
+    sessionStorage.setItem(RELOAD_KEY, String(Date.now()));
+  } catch {
+    return false;
+  }
+  window.location.reload();
+  return true;
+}
+
+type Props = { children: ReactNode; where: string; compact?: boolean };
+
+/**
+ * Catches crashes so visitors never see a blank page. The page-level boundary is keyed by the
+ * current path, so a crash on one page clears as soon as the visitor navigates elsewhere.
+ */
+export class ErrorBoundary extends Component<Props, { error: Error | null }> {
+  state = { error: null as Error | null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
   }
 
-  componentDidCatch(error: unknown) {
+  componentDidCatch(error: Error) {
     console.error(error);
+    reportError(error, this.props.where);
+    // Code from an older deploy: fetching the current version fixes it, so do that automatically.
+    if (isChunkLoadError(error)) reloadOnce();
   }
 
   render() {
-    if (!this.state.failed) return this.props.children;
+    const { error } = this.state;
+    if (!error) return this.props.children;
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center bg-ink px-6 text-center">
+      <div className={`flex flex-col items-center justify-center bg-ink px-6 text-center ${this.props.compact ? 'min-h-[60vh]' : 'min-h-screen'}`}>
         <div className="gold-rule mb-8" />
         <h1 className="text-4xl text-bone">Something went wrong</h1>
-        <p className="mt-4 max-w-md text-mute">The page didn’t load properly. Reloading usually fixes it.</p>
+        <p className="mt-4 max-w-md text-mute">This page didn’t load properly. Reloading usually fixes it, or use the menu to go elsewhere.</p>
         <button onClick={() => window.location.reload()} className="btn-gold mt-10">
           Reload page
         </button>
+        <details className="mt-10 max-w-xl text-left text-xs text-faint">
+          <summary className="cursor-pointer text-center">Technical details</summary>
+          <code className="mt-3 block whitespace-pre-wrap break-words font-mono">{error.message}</code>
+        </details>
       </div>
     );
   }

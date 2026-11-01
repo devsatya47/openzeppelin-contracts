@@ -5,6 +5,7 @@ import { useAuth } from '../lib/auth';
 import { useCategories } from '../lib/catalog';
 import { useClickOutside } from '../lib/hooks';
 import { SearchBox } from './SearchBox';
+import { ErrorBoundary } from './ErrorBoundary';
 import { SITE, tradingNameNotice } from '../lib/site';
 
 export function Logo({ className = '' }: { className?: string }) {
@@ -262,7 +263,9 @@ export function Layout() {
       </a>
       <Header />
       <main id="main" className="flex-1">
-        <Outlet />
+        <ErrorBoundary key={pathname} where="page" compact>
+          <Outlet />
+        </ErrorBoundary>
       </main>
       <Footer />
     </div>
