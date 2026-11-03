@@ -9,7 +9,7 @@ import { ErrorNote, SectionHeading, Spinner, Stars } from '../components/ui';
 import NotFound from './NotFound';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { COUNTRIES, countryName, date, dims, money } from '../lib/format';
+import { COUNTRIES, countryName, date, dims, listingPrice, money } from '../lib/format';
 import { useApi, useDocumentTitle, usePlatformConfig } from '../lib/hooks';
 import type { Listing, ListingDetail, Question } from '../lib/types';
 
@@ -35,15 +35,84 @@ function ShippingCalculator({ listing }: { listing: ListingDetail }) {
           <dt>{domestic ? 'Domestic' : 'International'} flat rate</dt>
           <dd className="tabular-nums text-bone">{ship === 0 ? 'Complimentary' : money(ship, listing.currency)}</dd>
         </div>
-        <div className="flex justify-between border-t border-line pt-2">
-          <dt className="text-mute">Total to {countryName(country)}</dt>
-          <dd className="tabular-nums text-gold">{money(listing.priceCents + ship, listing.currency)}</dd>
-        </div>
+        {!listing.priceOnRequest && (
+          <div className="flex justify-between border-t border-line pt-2">
+            <dt className="text-mute">Total to {countryName(country)}</dt>
+            <dd className="tabular-nums text-gold">{money(listing.priceCents + ship, listing.currency)}</dd>
+          </div>
+        )}
       </dl>
       <p className="mt-3 text-xs text-faint">
         Ships from {countryName(listing.originCountry)} · domestic {money(listing.shippingDomesticCents)} · international {money(listing.shippingInternationalCents)}. Fully insured fine-art handling.
       </p>
     </div>
+  );
+}
+
+/** Private purchase enquiry, sent to the gallery's Enquiries inbox with the collector's contact details. */
+function EnquiryForm({ listing }: { listing: ListingDetail }) {
+  const { user } = useAuth();
+  const [open, setOpen] = useState(false);
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const [sent, setSent] = useState(false);
+
+  if (sent) {
+    return (
+      <div className="border border-ok/40 bg-ok/10 p-5 text-sm text-ok">
+        Thank you. {listing.gallery.name} has your enquiry and will reply to you by email.
+      </div>
+    );
+  }
+  if (!open) {
+    return (
+      <div className="space-y-3">
+        <button onClick={() => setOpen(true)} className="btn-gold w-full py-4 text-sm">Enquire about this work</button>
+        <p className="text-xs text-faint">
+          {listing.priceOnRequest ? 'The price of this work is available on request.' : 'This work is available by private enquiry.'} The gallery replies to you directly by email.
+        </p>
+      </div>
+    );
+  }
+  if (!user) {
+    return (
+      <div className="border border-line p-5 text-sm text-mute">
+        Please <Link to={`/login?next=/listing/${listing.slug}`} className="text-gold hover:underline">sign in</Link> or{' '}
+        <Link to={`/register?next=/listing/${listing.slug}`} className="text-gold hover:underline">create an account</Link> so the gallery can reply to you.
+      </div>
+    );
+  }
+  return (
+    <form
+      className="space-y-3"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        setError(null);
+        try {
+          await api(`/listings/${listing.id}/enquiries`, { body: { message } });
+          setSent(true);
+        } catch (err) {
+          setError(err);
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <textarea
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+        rows={4}
+        className="field"
+        minLength={10}
+        required
+        placeholder={listing.priceOnRequest ? 'Hello, could you share the price and availability of this work?' : 'Hello, I would like to acquire this work.'}
+      />
+      <p className="text-xs text-faint">The gallery will see your name and email ({user.email}) to reply.</p>
+      <ErrorNote error={error} />
+      <button className="btn-gold w-full" disabled={busy}>{busy ? 'Sending…' : 'Send enquiry'}</button>
+    </form>
   );
 }
 
@@ -123,7 +192,7 @@ export default function ListingPage() {
   if (error || !data) return <Page className="py-20"><ErrorNote error={error} /></Page>;
   const l = data.listing;
   const d = dims(l.widthCm, l.heightCm, l.depthCm);
-  const enquiryOnly = l.priceCents > platform.maxPriceCents;
+  const enquiryOnly = l.priceOnRequest || l.priceCents > platform.maxPriceCents;
   const available = l.status === 'active' && !enquiryOnly;
 
   const acquire = () => {
@@ -161,21 +230,18 @@ export default function ListingPage() {
             <div className="flex items-end justify-between gap-4 border-y border-line py-6">
               <div>
                 <div className="text-[10px] uppercase tracking-[0.22em] text-faint">Price</div>
-                <div className="mt-1 font-serif text-4xl tabular-nums text-gold">{money(l.priceCents, l.currency)}</div>
+                <div className={`mt-1 font-serif tabular-nums text-gold ${l.priceOnRequest ? 'text-3xl italic' : 'text-4xl'}`}>{listingPrice(l)}</div>
               </div>
               <div className="flex items-center gap-4">
                 <span className="flex items-center gap-1.5 text-xs text-faint"><Eye size={13} /> {l.views}</span>
-                <ShareButton path={`/listing/${l.slug}`} title={`${l.title} by ${l.artist}`} text={`${money(l.priceCents, l.currency)} on Curated Art`} image={l.media[0]?.url} />
+                <ShareButton path={`/listing/${l.slug}`} title={`${l.title} by ${l.artist}`} text={`${listingPrice(l)} on Curated Art`} image={l.media[0]?.url} />
               </div>
             </div>
 
             {l.isOwner ? (
               <Link to={`/vendor/listings/${l.id}`} className="btn-outline w-full">Edit this listing</Link>
             ) : enquiryOnly && l.status === 'active' ? (
-              <div className="space-y-3">
-                <Link to="/contact" className="btn-outline w-full py-4 text-sm">Enquire about this work</Link>
-                <p className="text-xs text-faint">This work is available by private enquiry. Contact us and we will arrange the acquisition.</p>
-              </div>
+              <EnquiryForm listing={l} />
             ) : (
               <button onClick={acquire} disabled={!available} className="btn-gold w-full py-4 text-sm">
                 {available ? 'Acquire Piece' : l.status === 'reserved' ? 'Reserved' : 'Acquired'}

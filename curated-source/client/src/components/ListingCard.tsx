@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { ArtFrame } from './ArtFrame';
-import { money } from '../lib/format';
+import { listingPrice } from '../lib/format';
 import type { Listing } from '../lib/types';
 
 export function ListingCard({ listing, priority = false }: { listing: Listing; priority?: boolean }) {
@@ -24,7 +24,7 @@ export function ListingCard({ listing, priority = false }: { listing: Listing; p
           </p>
           {listing.gallery && <p className="mt-1 truncate text-[11px] uppercase tracking-[0.18em] text-faint">{listing.gallery.name}</p>}
         </div>
-        <div className="shrink-0 pt-1 text-sm tabular-nums text-gold">{money(listing.priceCents, listing.currency)}</div>
+        <div className="shrink-0 pt-1 text-sm tabular-nums text-gold">{listingPrice(listing)}</div>
       </div>
     </Link>
   );

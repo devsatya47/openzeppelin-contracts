@@ -12,6 +12,8 @@ export function MediaUploader({ value, onChange }: { value: Media[]; onChange: (
   const [uploading, setUploading] = useState<string[]>([]);
   const [error, setError] = useState<unknown>(null);
   const input = useRef<HTMLInputElement>(null);
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const [dragOver, setDragOver] = useState<number | null>(null);
   const latest = useRef(value);
   latest.current = value;
 
@@ -32,6 +34,15 @@ export function MediaUploader({ value, onChange }: { value: Media[]; onChange: (
       setUploading((u) => u.filter((p) => !previews.includes(p)));
       previews.forEach(URL.revokeObjectURL);
     }
+  };
+
+  /** Moves the image at `from` to position `to` (drag and drop). */
+  const moveTo = (from: number, to: number) => {
+    if (from === to) return;
+    const next = [...value];
+    const [m] = next.splice(from, 1);
+    next.splice(to, 0, m);
+    onChange(next);
   };
 
   const move = (i: number, d: number) => {
@@ -71,9 +82,44 @@ export function MediaUploader({ value, onChange }: { value: Media[]; onChange: (
       {(value.length > 0 || uploading.length > 0) && (
         <div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">
           {value.map((m, i) => (
-            <div key={m.url} className={`group relative aspect-square border bg-ink-3 p-2 ${i === 0 ? 'border-gold' : 'border-line'}`}>
-              {m.kind === 'video' ? <video src={mediaUrl(m.url)} muted className="h-full w-full object-contain" /> : <img src={mediaUrl(m.thumbUrl)} alt="" className="h-full w-full object-contain" />}
+            <div
+              key={m.url}
+              draggable
+              onDragStart={(e) => {
+                setDragFrom(i);
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', String(i)); // required by Firefox
+              }}
+              onDragOver={(e) => {
+                if (dragFrom === null) return; // files from the desktop are handled by the drop zone
+                e.preventDefault();
+                e.stopPropagation();
+                setDragOver(i);
+              }}
+              onDrop={(e) => {
+                if (dragFrom === null) return;
+                e.preventDefault();
+                e.stopPropagation();
+                moveTo(dragFrom, i);
+                setDragFrom(null);
+                setDragOver(null);
+              }}
+              onDragEnd={() => {
+                setDragFrom(null);
+                setDragOver(null);
+              }}
+              title="Drag to reorder. The first image is the cover."
+              className={`group relative aspect-square cursor-grab border bg-ink-3 p-2 active:cursor-grabbing ${i === 0 ? 'border-gold' : 'border-line'} ${
+                dragOver === i && dragFrom !== i ? 'ring-2 ring-gold' : ''
+              } ${dragFrom === i ? 'opacity-40' : ''}`}
+            >
+              {m.kind === 'video' ? (
+                <video src={mediaUrl(m.url)} muted draggable={false} className="pointer-events-none h-full w-full object-contain" />
+              ) : (
+                <img src={mediaUrl(m.thumbUrl)} alt="" draggable={false} className="pointer-events-none h-full w-full object-contain" />
+              )}
               {i === 0 && <span className="absolute left-1 top-1 bg-gold px-1.5 py-0.5 text-[8px] uppercase tracking-wider text-ink">Cover</span>}
+              <span className="absolute right-1 top-1 bg-ink/80 px-1.5 py-0.5 text-[8px] tabular-nums text-mute">{i + 1}</span>
               <div className="absolute inset-x-0 bottom-0 flex justify-between bg-ink/85 p-1 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
                 <button type="button" onClick={() => move(i, -1)} disabled={i === 0} className="p-1 text-mute hover:text-gold disabled:opacity-30" aria-label="Move earlier"><ArrowLeft size={12} /></button>
                 <button type="button" onClick={() => move(i, -i)} disabled={i === 0} className="p-1 text-mute hover:text-gold disabled:opacity-30" aria-label="Make cover"><Star size={12} /></button>
@@ -92,6 +138,7 @@ export function MediaUploader({ value, onChange }: { value: Media[]; onChange: (
           ))}
         </div>
       )}
+      {value.length > 1 && <p className="mt-2 text-xs text-faint">Drag the images to change their order. The first image is the cover shown in the catalogue.</p>}
     </div>
   );
 }

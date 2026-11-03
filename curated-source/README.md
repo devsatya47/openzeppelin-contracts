@@ -74,6 +74,9 @@ Set `AUTO_SEED_DEMO=true` to have the server load the demo data itself on first 
 - Drag-and-drop uploader (images and video), with reorder, choose cover and remove; thumbnails are generated server-side
 - Cascading category selection with a **"Suggest a new subcategory"** fallback. The suggestion is created as `pending` for admin review. Until it is approved, the work is still discoverable under the parent category. If the suggestion is rejected, its works move to the parent.
 - Flat-rate domestic and international shipping fields
+- **Inventory control:** drag works up or down (or use the arrows) to set their order on the public gallery page; hide a work from public view and show it again; permanently delete a work that has never been ordered (works with orders can only be hidden)
+- **Price on request:** a work can hide its price. Collectors send an enquiry instead of buying online, and the gallery answers from the **Price enquiries** tab
+- **Public gallery page** (`/galleries/:slug`) lists every work on view in the gallery's chosen order. Its banner is either an uploaded cover image or one of the gallery's own works, picked under **Gallery profile**
 
 **Escrow, orders & dashboards**
 - Escrow state machine (`server/lib/escrow.ts`): `pending → in_escrow → dispatched → delivered → released`, with off-ramps:

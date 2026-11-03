@@ -43,6 +43,8 @@ export const galleries = sqliteTable(
     location: text('location').notNull().default(''),
     country: text('country').notNull().default('US'),
     coverUrl: text('cover_url'),
+    // When set, the gallery page banner shows this work's image instead of coverUrl.
+    bannerListingId: integer('banner_listing_id'),
     status: text('status', { enum: GALLERY_STATUS }).notNull().default('pending'),
     featured: integer('featured', { mode: 'boolean' }).notNull().default(false),
     reviewNote: text('review_note'),
@@ -69,7 +71,8 @@ export const categories = sqliteTable(
   (t) => [index('categories_parent_idx').on(t.parentId)],
 );
 
-export const LISTING_STATUS = ['draft', 'active', 'reserved', 'sold', 'archived'] as const;
+// 'hidden' = published but taken off the public site by the gallery.
+export const LISTING_STATUS = ['draft', 'active', 'hidden', 'reserved', 'sold', 'archived'] as const;
 
 export const listings = sqliteTable(
   'listings',
@@ -96,6 +99,10 @@ export const listings = sqliteTable(
     certificateOfAuthenticity: integer('certificate_of_authenticity', { mode: 'boolean' }).notNull().default(true),
     status: text('status', { enum: LISTING_STATUS }).notNull().default('active'),
     featured: integer('featured', { mode: 'boolean' }).notNull().default(false),
+    // Gallery-chosen position on its own page and in its inventory (lower = first).
+    sortOrder: integer('sort_order').notNull().default(0),
+    // Hide the price and take enquiries instead of online purchases.
+    priceOnRequest: integer('price_on_request', { mode: 'boolean' }).notNull().default(false),
     views: integer('views').notNull().default(0),
     ...timestamps,
   },
@@ -271,4 +278,21 @@ export const auditLogs = sqliteTable(
     ...timestamps,
   },
   (t) => [index('audit_entity_idx').on(t.entityType, t.entityId), index('audit_created_idx').on(t.createdAt)],
+);
+
+export const ENQUIRY_STATUS = ['new', 'replied', 'closed'] as const;
+
+/** Private purchase enquiries (price-on-request or above-cap works), visible to the gallery only. */
+export const enquiries = sqliteTable(
+  'enquiries',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    listingId: integer('listing_id').notNull().references(() => listings.id, { onDelete: 'cascade' }),
+    galleryId: integer('gallery_id').notNull().references(() => galleries.id),
+    buyerId: integer('buyer_id').notNull().references(() => users.id),
+    message: text('message').notNull(),
+    status: text('status', { enum: ENQUIRY_STATUS }).notNull().default('new'),
+    ...timestamps,
+  },
+  (t) => [index('enquiries_gallery_idx').on(t.galleryId)],
 );

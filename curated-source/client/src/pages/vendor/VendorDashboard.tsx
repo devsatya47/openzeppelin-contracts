@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Plus } from 'lucide-react';
+import { ExternalLink, Plus } from 'lucide-react';
 import { BarChart } from '../../components/BarChart';
 import { Page } from '../../components/Layout';
 import { MediaUploader } from '../../components/MediaUploader';
@@ -13,7 +13,7 @@ import { COUNTRIES, date, money } from '../../lib/format';
 import { useApi, useDocumentTitle } from '../../lib/hooks';
 import type { Balance, Listing, Media, Order } from '../../lib/types';
 
-type Tab = 'overview' | 'inventory' | 'orders' | 'questions' | 'payouts' | 'gallery';
+type Tab = 'overview' | 'inventory' | 'orders' | 'questions' | 'enquiries' | 'payouts' | 'gallery';
 
 type Analytics = {
   totals: { orders: number; grossCents: number; netCents: number; views: number };
@@ -72,11 +72,17 @@ function Overview() {
 }
 
 function Inventory() {
-  const { data, reload } = useApi<{ listings: Listing[] }>('/vendor/listings');
+  const { data, reload, setData } = useApi<{ listings: Listing[] }>('/vendor/listings');
   const [filter, setFilter] = useState('all');
   const [error, setError] = useState<unknown>(null);
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const [dragOver, setDragOver] = useState<number | null>(null);
+  const [saved, setSaved] = useState(false);
   if (!data) return <Spinner />;
-  const rows = data.listings.filter((l) => filter === 'all' || l.status === filter);
+  const all = data.listings;
+  const rows = all.filter((l) => filter === 'all' || l.status === filter || (filter === 'hidden' && l.status === 'archived'));
+  const canReorder = filter === 'all' && all.length > 1;
+
   const act = async (fn: () => Promise<unknown>) => {
     setError(null);
     try {
@@ -86,52 +92,125 @@ function Inventory() {
       setError(e);
     }
   };
+
+  /** Moves a work and saves the new order (also used on the public gallery page). */
+  const reorder = async (from: number, to: number) => {
+    if (from === to || to < 0 || to >= all.length) return;
+    const next = [...all];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    setData({ listings: next });
+    setError(null);
+    try {
+      await api('/vendor/listings/order', { method: 'PUT', body: { ids: next.map((l) => l.id) } });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (e) {
+      setError(e);
+      reload();
+    }
+  };
+
+  const remove = (l: Listing) => {
+    if (!window.confirm(`Delete “${l.title}” permanently? This cannot be undone.`)) return;
+    act(() => api(`/vendor/listings/${l.id}`, { method: 'DELETE' }));
+  };
+
+  const count = (s: string) => (s === 'all' ? all.length : all.filter((l) => l.status === s || (s === 'hidden' && l.status === 'archived')).length);
+
   return (
     <div>
       <div className="mb-6 flex flex-wrap items-center gap-2">
-        {['all', 'active', 'reserved', 'sold', 'draft', 'archived'].map((s) => (
+        {['all', 'active', 'hidden', 'reserved', 'sold', 'draft'].map((s) => (
           <button key={s} onClick={() => setFilter(s)} className={`border px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] ${filter === s ? 'border-gold text-gold' : 'border-line text-mute'}`}>
-            {s} {s === 'all' ? data.listings.length : data.listings.filter((l) => l.status === s).length}
+            {s} {count(s)}
           </button>
         ))}
         <Link to="/vendor/listings/new" className="btn-gold btn-sm ml-auto"><Plus size={12} /> New listing</Link>
       </div>
+      <p className="mb-4 text-xs text-faint">
+        {canReorder
+          ? 'Drag works by the ⠿ handle (or use the arrows) to set the order shown on your public gallery page.'
+          : filter !== 'all' && 'Switch to “all” to change the order of your works.'}
+        {saved && <span className="ml-2 text-ok">Order saved</span>}
+      </p>
       <ErrorNote error={error} />
       {rows.length === 0 ? (
         <Empty title="No works here yet" />
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] text-sm">
+          <table className="w-full min-w-[820px] text-sm">
             <thead className="border-b border-line text-left text-[10px] uppercase tracking-[0.18em] text-faint">
-              <tr><th className="py-3 pr-4 font-normal">Work</th><th className="font-normal">Category</th><th className="font-normal">Price</th><th className="font-normal">Views</th><th className="font-normal">Status</th><th /></tr>
+              <tr><th className="w-16" /><th className="py-3 pr-4 font-normal">Work</th><th className="font-normal">Category</th><th className="font-normal">Price</th><th className="font-normal">Views</th><th className="font-normal">Status</th><th /></tr>
             </thead>
             <tbody className="divide-y divide-line">
-              {rows.map((l) => (
-                <tr key={l.id}>
-                  <td className="py-3 pr-4">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-12 w-12 shrink-0 items-center justify-center bg-ink-3 p-1">{l.cover && <img src={mediaUrl(l.cover.thumbUrl)} alt="" className="max-h-full max-w-full object-contain" />}</div>
-                      <div className="min-w-0">
-                        <div className="truncate font-serif text-base">{l.title}</div>
-                        <div className="truncate text-xs text-faint">{l.artist}</div>
+              {rows.map((l, i) => {
+                const locked = ['reserved', 'sold'].includes(l.status);
+                const hidden = l.status === 'hidden' || l.status === 'archived';
+                return (
+                  <tr
+                    key={l.id}
+                    draggable={canReorder}
+                    onDragStart={(e) => {
+                      setDragFrom(i);
+                      e.dataTransfer.effectAllowed = 'move';
+                      e.dataTransfer.setData('text/plain', String(l.id));
+                    }}
+                    onDragOver={(e) => {
+                      if (dragFrom === null) return;
+                      e.preventDefault();
+                      setDragOver(i);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      if (dragFrom !== null) reorder(dragFrom, i);
+                      setDragFrom(null);
+                      setDragOver(null);
+                    }}
+                    onDragEnd={() => {
+                      setDragFrom(null);
+                      setDragOver(null);
+                    }}
+                    className={`${dragFrom === i ? 'opacity-40' : ''} ${dragOver === i && dragFrom !== i ? 'outline outline-1 outline-gold' : ''} ${hidden ? 'opacity-60' : ''}`}
+                  >
+                    <td className="py-3">
+                      {canReorder && (
+                        <div className="flex items-center gap-1 text-faint">
+                          <span className="cursor-grab select-none px-1 text-lg leading-none active:cursor-grabbing" title="Drag to reorder" aria-hidden>⠿</span>
+                          <span className="flex flex-col">
+                            <button type="button" onClick={() => reorder(i, i - 1)} disabled={i === 0} className="leading-none hover:text-gold disabled:opacity-20" aria-label={`Move ${l.title} up`}>▲</button>
+                            <button type="button" onClick={() => reorder(i, i + 1)} disabled={i === rows.length - 1} className="leading-none hover:text-gold disabled:opacity-20" aria-label={`Move ${l.title} down`}>▼</button>
+                          </span>
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-3 pr-4">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center bg-ink-3 p-1">{l.cover && <img src={mediaUrl(l.cover.thumbUrl)} alt="" draggable={false} className="max-h-full max-w-full object-contain" />}</div>
+                        <div className="min-w-0">
+                          <div className="truncate font-serif text-base">{l.title}</div>
+                          <div className="truncate text-xs text-faint">{l.artist}</div>
+                        </div>
                       </div>
-                    </div>
-                  </td>
-                  <td className="text-mute">{l.category?.name}</td>
-                  <td className="tabular-nums text-gold">{money(l.priceCents)}</td>
-                  <td className="tabular-nums text-faint">{l.views}</td>
-                  <td><StatusPill status={l.status} /></td>
-                  <td className="space-x-3 whitespace-nowrap text-right text-[10px] uppercase tracking-[0.15em]">
-                    {['active', 'draft', 'archived'].includes(l.status) && <Link to={`/vendor/listings/${l.id}`} className="text-mute hover:text-gold">Edit</Link>}
-                    {l.status === 'active' && <Link to={`/listing/${l.slug}`} className="text-mute hover:text-gold">View</Link>}
-                    {l.status === 'active' && (
-                      <ShareButton path={`/listing/${l.slug}`} title={`${l.title} by ${l.artist}`} image={l.cover?.url} className="inline-flex items-center gap-1 uppercase text-mute hover:text-gold" />
-                    )}
-                    {l.status === 'active' && <button onClick={() => act(() => api(`/vendor/listings/${l.id}`, { method: 'DELETE' }))} className="uppercase text-mute hover:text-bad">Archive</button>}
-                    {['draft', 'archived'].includes(l.status) && <button onClick={() => act(() => api(`/vendor/listings/${l.id}`, { method: 'PATCH', body: { status: 'active' } }))} className="uppercase text-gold">Publish</button>}
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="text-mute">{l.category?.name}</td>
+                    <td className="tabular-nums text-gold">{l.priceOnRequest ? <span className="text-xs italic">On request</span> : money(l.priceCents)}</td>
+                    <td className="tabular-nums text-faint">{l.views}</td>
+                    <td><StatusPill status={l.status === 'archived' ? 'hidden' : l.status} /></td>
+                    <td className="space-x-3 whitespace-nowrap text-right text-[10px] uppercase tracking-[0.15em]">
+                      {!locked && <Link to={`/vendor/listings/${l.id}`} className="text-mute hover:text-gold">Edit</Link>}
+                      {l.status === 'active' && <Link to={`/listing/${l.slug}`} className="text-mute hover:text-gold">View</Link>}
+                      {l.status === 'active' && (
+                        <ShareButton path={`/listing/${l.slug}`} title={`${l.title} by ${l.artist}`} image={l.cover?.url} className="inline-flex items-center gap-1 uppercase text-mute hover:text-gold" />
+                      )}
+                      {l.status === 'active' && <button onClick={() => act(() => api(`/vendor/listings/${l.id}`, { method: 'PATCH', body: { status: 'hidden' } }))} className="uppercase text-mute hover:text-gold">Hide</button>}
+                      {hidden && <button onClick={() => act(() => api(`/vendor/listings/${l.id}`, { method: 'PATCH', body: { status: 'active' } }))} className="uppercase text-gold">Show</button>}
+                      {l.status === 'draft' && <button onClick={() => act(() => api(`/vendor/listings/${l.id}`, { method: 'PATCH', body: { status: 'active' } }))} className="uppercase text-gold">Publish</button>}
+                      {!locked && <button onClick={() => remove(l)} className="uppercase text-mute hover:text-bad">Delete</button>}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -182,6 +261,55 @@ function Questions() {
               <button className="btn-outline btn-sm shrink-0">Answer</button>
             </form>
           )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+type Enquiry = { id: number; message: string; status: string; createdAt: string; buyerName: string; buyerEmail: string; buyerCountry: string | null; listingTitle: string; listingSlug: string };
+
+function Enquiries({ onChange }: { onChange: () => void }) {
+  const { data, reload } = useApi<{ enquiries: Enquiry[]; unread: number }>('/vendor/enquiries');
+  const [error, setError] = useState<unknown>(null);
+  if (!data) return <Spinner />;
+  if (!data.enquiries.length)
+    return <Empty title="No price enquiries yet">Collectors can ask for the price on works marked “Price on request”. Their messages appear here.</Empty>;
+  const mark = async (id: number, status: string) => {
+    setError(null);
+    try {
+      await api(`/vendor/enquiries/${id}`, { method: 'PATCH', body: { status } });
+      reload();
+      onChange();
+    } catch (e) {
+      setError(e);
+    }
+  };
+  return (
+    <div className="space-y-4">
+      <ErrorNote error={error} />
+      {data.enquiries.map((q) => (
+        <div key={q.id} className={`card p-5 ${q.status === 'new' ? 'border-gold/40' : ''}`}>
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-faint">
+            <StatusPill status={q.status} />
+            <span>
+              {q.buyerName}
+              {q.buyerCountry ? ` (${q.buyerCountry})` : ''} about <Link to={`/listing/${q.listingSlug}`} className="text-gold">{q.listingTitle}</Link> · {date(q.createdAt)}
+            </span>
+          </div>
+          <p className="whitespace-pre-line text-bone">{q.message}</p>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <a
+              href={`mailto:${q.buyerEmail}?subject=${encodeURIComponent(`Your enquiry about “${q.listingTitle}”`)}`}
+              onClick={() => q.status === 'new' && mark(q.id, 'replied')}
+              className="btn-gold btn-sm"
+            >
+              Reply by email
+            </a>
+            <span className="text-xs text-faint">{q.buyerEmail}</span>
+            {q.status !== 'replied' && <button onClick={() => mark(q.id, 'replied')} className="btn-ghost btn-sm">Mark replied</button>}
+            {q.status !== 'closed' && <button onClick={() => mark(q.id, 'closed')} className="btn-ghost btn-sm">Close</button>}
+          </div>
         </div>
       ))}
     </div>
@@ -260,7 +388,9 @@ function Payouts({ approved }: { approved: boolean }) {
 }
 
 function GallerySettings() {
-  const { data, reload } = useApi<{ gallery: { name: string; tagline: string; bio: string; location: string; country: string; coverUrl: string | null; status: string; reviewNote: string | null; slug: string } }>('/vendor/gallery');
+  const { data, reload } = useApi<{ gallery: { name: string; tagline: string; bio: string; location: string; country: string; coverUrl: string | null; bannerListingId: number | null; status: string; reviewNote: string | null; slug: string } }>('/vendor/gallery');
+  const works = useApi<{ listings: Listing[] }>('/vendor/listings');
+  const [banner, setBanner] = useState<number | null | undefined>(undefined);
   const [form, setForm] = useState<any>(null);
   const [cover, setCover] = useState<Media[] | null>(null);
   const [msg, setMsg] = useState<unknown>(null);
@@ -269,6 +399,8 @@ function GallerySettings() {
   const g = form ?? data.gallery;
   const coverMedia = cover ?? (data.gallery.coverUrl ? [{ kind: 'image' as const, url: data.gallery.coverUrl, thumbUrl: data.gallery.coverUrl, width: null, height: null }] : []);
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => setForm({ ...g, [k]: e.target.value });
+  const bannerId = banner === undefined ? data.gallery.bannerListingId : banner;
+  const candidates = (works.data?.listings ?? []).filter((l) => l.cover?.kind !== 'video' && l.cover && ['active', 'reserved', 'sold'].includes(l.status));
   return (
     <form
       className="grid max-w-4xl gap-5 sm:grid-cols-2"
@@ -276,7 +408,7 @@ function GallerySettings() {
         e.preventDefault();
         setMsg(null);
         try {
-          await api('/vendor/gallery', { method: 'PATCH', body: { name: g.name, tagline: g.tagline, bio: g.bio, location: g.location, country: g.country, ...(coverMedia[0] ? { coverUrl: coverMedia[0].url } : {}) } });
+          await api('/vendor/gallery', { method: 'PATCH', body: { name: g.name, tagline: g.tagline, bio: g.bio, location: g.location, country: g.country, bannerListingId: bannerId, ...(coverMedia[0] ? { coverUrl: coverMedia[0].url } : {}) } });
           setSaved(true);
           reload();
         } catch (err) {
@@ -299,7 +431,35 @@ function GallerySettings() {
         <select value={g.country} onChange={set('country')} className="field">{COUNTRIES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select>
       </Field>
       <div className="sm:col-span-2">
-        <span className="label">Cover image</span>
+        <span className="label">Banner on your gallery page</span>
+        <p className="mb-3 text-xs text-faint">Feature one of your works across the top of your public gallery page, or use an uploaded cover image instead. Only works on view can be featured.</p>
+        <div className="grid grid-cols-3 gap-3 sm:grid-cols-5 lg:grid-cols-6">
+          <button
+            type="button"
+            onClick={() => setBanner(null)}
+            aria-pressed={bannerId === null}
+            className={`flex aspect-square flex-col items-center justify-center gap-1 border p-2 text-center text-[10px] uppercase tracking-[0.15em] ${bannerId === null ? 'border-gold text-gold' : 'border-line text-mute hover:border-gold/50'}`}
+          >
+            {coverMedia[0] ? <img src={mediaUrl(coverMedia[0].thumbUrl)} alt="" className="max-h-[60%] max-w-full object-contain" /> : null}
+            Uploaded cover
+          </button>
+          {candidates.map((l) => (
+            <button
+              key={l.id}
+              type="button"
+              onClick={() => setBanner(l.id)}
+              aria-pressed={bannerId === l.id}
+              title={l.title}
+              className={`relative flex aspect-square items-center justify-center border bg-ink-3 p-1 ${bannerId === l.id ? 'border-gold ring-1 ring-gold' : 'border-line hover:border-gold/50'}`}
+            >
+              <img src={mediaUrl(l.cover!.thumbUrl)} alt={l.title} className="max-h-full max-w-full object-contain" />
+              {bannerId === l.id && <span className="absolute bottom-1 left-1 bg-gold px-1.5 text-[9px] uppercase tracking-[0.15em] text-ink">Banner</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="sm:col-span-2">
+        <span className="label">Uploaded cover image</span>
         <MediaUploader value={coverMedia} onChange={(m) => setCover(m.slice(-1))} />
       </div>
       <div className="sm:col-span-2 space-y-3">
@@ -318,6 +478,7 @@ export default function VendorDashboard() {
   const tab = (params.get('tab') as Tab) ?? 'overview';
   const questions = useApi<{ unanswered: number }>('/vendor/questions');
   const orders = useApi<{ orders: Order[] }>('/vendor/orders');
+  const enquiries = useApi<{ unread: number }>('/vendor/enquiries');
   const gallery = user?.gallery;
 
   return (
@@ -329,6 +490,9 @@ export default function VendorDashboard() {
         </div>
         <div className="flex items-center gap-3">
           {gallery && <StatusPill status={gallery.status} />}
+          {gallery?.status === 'approved' && (
+            <Link to={`/galleries/${gallery.slug}`} className="btn-ghost"><ExternalLink size={14} /> View my gallery page</Link>
+          )}
           {gallery?.status === 'approved' && <ShareButton path={`/galleries/${gallery.slug}`} title={gallery.name} label="Share gallery" className="btn-ghost" />}
           <Link to="/vendor/listings/new" className="btn-gold"><Plus size={14} /> List a work</Link>
         </div>
@@ -344,6 +508,7 @@ export default function VendorDashboard() {
           { id: 'inventory', label: 'Inventory' },
           { id: 'orders', label: 'Orders', badge: orders.data?.orders.filter((o) => o.status === 'in_escrow').length },
           { id: 'questions', label: 'Q&A', badge: questions.data?.unanswered },
+          { id: 'enquiries', label: 'Price enquiries', badge: enquiries.data?.unread },
           { id: 'payouts', label: 'Payouts' },
           { id: 'gallery', label: 'Gallery profile' },
         ]}
@@ -352,6 +517,7 @@ export default function VendorDashboard() {
       {tab === 'inventory' && <Inventory />}
       {tab === 'orders' && <Orders />}
       {tab === 'questions' && <Questions />}
+      {tab === 'enquiries' && <Enquiries onChange={enquiries.reload} />}
       {tab === 'payouts' && <Payouts approved={gallery?.status === 'approved'} />}
       {tab === 'gallery' && <GallerySettings />}
     </Page>

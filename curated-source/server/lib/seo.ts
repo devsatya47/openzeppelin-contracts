@@ -47,7 +47,7 @@ function metaFor(pathname: string, origin: string): Meta | null {
     const l = row.l;
     return {
       title: `${l.title} by ${l.artist} — ${SITE_NAME}`,
-      description: `${l.medium}${l.year ? `, ${l.year}` : ''} · ${usd(l.priceCents)} · Offered by ${row.galleryName}. Payment protected until delivery.`,
+      description: `${l.medium}${l.year ? `, ${l.year}` : ''} · ${l.priceOnRequest ? 'Price on request' : usd(l.priceCents)} · Offered by ${row.galleryName}. Payment protected until delivery.`,
       image: abs(cover?.url),
       url: origin + pathname,
       type: 'product',

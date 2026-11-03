@@ -34,7 +34,7 @@ export default function ListingEditor() {
     title: '', artist: '', year: '', medium: '', description: '',
     widthCm: '', heightCm: '', depthCm: '',
     price: '', shipDomestic: '', shipInternational: '', originCountry: '',
-    provenance: '', edition: 'Unique work', coa: true,
+    provenance: '', edition: 'Unique work', coa: true, priceOnRequest: false,
   });
   const [rootId, setRootId] = useState('');
   const [subId, setSubId] = useState('');
@@ -50,7 +50,7 @@ export default function ListingEditor() {
       title: l.title, artist: l.artist, year: l.year ? String(l.year) : '', medium: l.medium, description: l.description,
       widthCm: l.widthCm ?? '', heightCm: l.heightCm ?? '', depthCm: l.depthCm ?? '',
       price: dollars(l.priceCents), shipDomestic: dollars(l.shippingDomesticCents), shipInternational: dollars(l.shippingInternationalCents),
-      originCountry: l.originCountry, provenance: l.provenance, edition: l.edition, coa: l.certificateOfAuthenticity,
+      originCountry: l.originCountry, provenance: l.provenance, edition: l.edition, coa: l.certificateOfAuthenticity, priceOnRequest: !!l.priceOnRequest,
     });
     if (l.category?.parentId) {
       setRootId(String(l.category.parentId));
@@ -66,7 +66,9 @@ export default function ListingEditor() {
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
     setF({ ...f, [k]: e.target.type === 'checkbox' ? (e.target as HTMLInputElement).checked : e.target.value });
 
-  const submit = async (status: 'active' | 'draft') => {
+  // Editing a hidden work keeps it hidden; the seller shows it again from the inventory.
+  const isHidden = existing.data?.listing?.status === 'hidden';
+  const submit = async (status: 'active' | 'draft' | 'hidden') => {
     setBusy(true);
     setError(null);
     try {
@@ -78,7 +80,7 @@ export default function ListingEditor() {
       const body = {
         title: f.title, artist: f.artist, year: f.year ? Number(f.year) : null, medium: f.medium, description: f.description,
         widthCm: numOrNull(String(f.widthCm)), heightCm: numOrNull(String(f.heightCm)), depthCm: numOrNull(String(f.depthCm)),
-        priceCents: toCents(f.price), shippingDomesticCents: toCents(f.shipDomestic), shippingInternationalCents: toCents(f.shipInternational),
+        priceCents: toCents(f.price), priceOnRequest: f.priceOnRequest, shippingDomesticCents: toCents(f.shipDomestic), shippingInternationalCents: toCents(f.shipInternational),
         originCountry: f.originCountry || undefined, provenance: f.provenance, edition: f.edition, certificateOfAuthenticity: f.coa,
         media, status, ...category,
       };
@@ -105,7 +107,7 @@ export default function ListingEditor() {
         <ErrorNote error={error} />
       </div>
 
-      <form onSubmit={(e) => { e.preventDefault(); submit('active'); }} className="mt-10 grid gap-12 lg:grid-cols-[1fr_360px]">
+      <form onSubmit={(e) => { e.preventDefault(); submit(isHidden ? 'hidden' : 'active'); }} className="mt-10 grid gap-12 lg:grid-cols-[1fr_360px]">
         <div className="space-y-12">
           <section>
             <h2 className="mb-5 text-2xl">Media</h2>
@@ -168,8 +170,18 @@ export default function ListingEditor() {
 
           <section className="card space-y-5 p-6">
             <h2 className="text-2xl">Price & shipping</h2>
-            <Field label="Price (USD)" hint={`Up to ${money(maxPriceCents)} per work`}>
-              <input value={f.price} onChange={set('price')} className="field text-lg text-gold" inputMode="decimal" required placeholder="0" />
+            <label className="flex items-start gap-3 text-sm text-mute">
+              <input type="checkbox" checked={f.priceOnRequest} onChange={set('priceOnRequest')} className="mt-1 accent-[#D4AF37]" />
+              <span>
+                <span className="text-bone">Price on request</span>
+                <span className="block text-xs text-faint">Hide the price. Collectors send you an enquiry instead of buying online.</span>
+              </span>
+            </label>
+            <Field
+              label={f.priceOnRequest ? 'Asking price (USD, optional)' : 'Price (USD)'}
+              hint={f.priceOnRequest ? 'For your own records. It is never shown to visitors.' : `Up to ${money(maxPriceCents)} per work`}
+            >
+              <input value={f.price} onChange={set('price')} className="field text-lg text-gold" inputMode="decimal" required={!f.priceOnRequest} placeholder="0" />
             </Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Domestic flat rate"><input value={f.shipDomestic} onChange={set('shipDomestic')} className="field" inputMode="decimal" required placeholder="0" /></Field>
@@ -180,7 +192,7 @@ export default function ListingEditor() {
                 {COUNTRIES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}
               </select>
             </Field>
-            {Number(f.price) > 0 && (
+            {Number(f.price) > 0 && !f.priceOnRequest && (
               <p className="text-xs text-faint">
                 You receive {money(toCents(f.price) * (1 - commission) + toCents(f.shipDomestic))} on a domestic sale, after the {Math.round(commission * 100)}% platform commission.
               </p>
@@ -188,7 +200,7 @@ export default function ListingEditor() {
           </section>
 
           <div className="flex flex-col gap-3">
-            <button className="btn-gold w-full py-4" disabled={busy}>{busy ? 'Saving…' : editing ? 'Save & publish' : 'Publish listing'}</button>
+            <button className="btn-gold w-full py-4" disabled={busy}>{busy ? 'Saving…' : isHidden ? 'Save (stays hidden)' : editing ? 'Save & publish' : 'Publish listing'}</button>
             <button type="button" onClick={() => submit('draft')} className="btn-ghost w-full" disabled={busy}>Save as draft</button>
           </div>
         </aside>

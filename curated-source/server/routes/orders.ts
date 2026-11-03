@@ -59,7 +59,7 @@ ordersRouter.post('/', requirePermission('order:create'), (req, res) => {
     if (!row || row.g.status !== 'approved') throw notFound('Listing not found');
     if (row.g.ownerId === user.id) throw badRequest('You cannot acquire a piece from your own gallery');
     if (row.l.status !== 'active') throw conflict('This piece is no longer available');
-    if (row.l.priceCents > config.maxPriceCents) {
+    if (row.l.priceOnRequest || row.l.priceCents > config.maxPriceCents) {
       throw badRequest('This work is available by private enquiry only. Please contact us.');
     }
     // Linked purchases count towards the AML threshold, so cap a buyer's spend with one gallery over 90 days.

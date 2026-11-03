@@ -1,5 +1,9 @@
 import type { OrderStatus } from './types';
 
+/** Listing price for display, respecting price on request. */
+export const listingPrice = (l: { priceCents: number; currency: string; priceOnRequest?: boolean }) =>
+  l.priceOnRequest ? 'Price on request' : money(l.priceCents, l.currency);
+
 export const money = (cents: number, currency = 'USD', opts: { decimals?: boolean } = {}) =>
   new Intl.NumberFormat('en-US', {
     style: 'currency',

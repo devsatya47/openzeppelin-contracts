@@ -1,9 +1,11 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { Router } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
 import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../db/client';
-import { categories, galleries, listingMedia, listings, orders, payouts, questions, users } from '../db/schema';
+import { categories, enquiries, ENQUIRY_STATUS, galleries, listingMedia, listings, orders, payouts, questions, users } from '../db/schema';
 import { config } from '../config';
 import { currentUser, requirePermission } from '../lib/auth';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors';
@@ -72,9 +74,15 @@ vendorRouter.patch('/gallery', (req, res) => {
       location: z.string().trim().max(120).optional(),
       country: z.string().trim().length(2).toUpperCase().optional(),
       coverUrl: z.string().startsWith('/uploads/').optional(),
+      // A work from this gallery to feature as the page banner, or null to use the uploaded cover.
+      bannerListingId: z.number().int().positive().nullable().optional(),
     })
     .parse(req.body);
   const g = myGallery(currentUser(req).id);
+  if (body.bannerListingId) {
+    const own = db.select({ id: listings.id }).from(listings).where(and(eq(listings.id, body.bannerListingId), eq(listings.galleryId, g.id))).get();
+    if (!own) throw badRequest('Choose one of your own works for the banner');
+  }
   const updated = db.update(galleries).set(body).where(eq(galleries.id, g.id)).returning().get();
   audit(req, 'gallery.update', 'gallery', g.id, body);
   res.json({ gallery: updated });
@@ -106,10 +114,11 @@ const listingFields = z.object({
   widthCm: z.number().positive().max(10000).nullable().optional(),
   heightCm: z.number().positive().max(10000).nullable().optional(),
   depthCm: z.number().positive().max(10000).nullable().optional(),
+  // With price on request the price is optional (0 = not stated) and never shown publicly.
   priceCents: z
     .number()
     .int()
-    .min(100)
+    .min(0)
     .max(config.maxPriceCents, `Prices are currently limited to $${(config.maxPriceCents / 100).toLocaleString('en-US')} per work`),
   shippingDomesticCents: z.number().int().min(0).max(100_000_00),
   shippingInternationalCents: z.number().int().min(0).max(100_000_00),
@@ -119,14 +128,17 @@ const listingFields = z.object({
   certificateOfAuthenticity: z.boolean().default(true),
   categoryId: z.number().int().positive().optional(),
   suggestedCategory: z.object({ parentId: z.number().int().positive(), name: z.string().trim().min(2).max(60) }).optional(),
-  status: z.enum(['draft', 'active']).default('active'),
+  priceOnRequest: z.boolean().default(false),
+  status: z.enum(['draft', 'active', 'hidden']).default('active'),
   media: z.array(mediaSchema).max(12).default([]),
 });
 
-const listingSchema = listingFields.refine((v) => v.categoryId || v.suggestedCategory, {
-  message: 'Choose a category or suggest a new one',
-  path: ['categoryId'],
-});
+const priceStated = (v: { priceOnRequest?: boolean; priceCents?: number }) => v.priceOnRequest || (v.priceCents ?? 0) >= 100;
+const PRICE_MESSAGE = { message: 'Enter a price of at least $1, or choose price on request', path: ['priceCents'] };
+
+const listingSchema = listingFields
+  .refine((v) => v.categoryId || v.suggestedCategory, { message: 'Choose a category or suggest a new one', path: ['categoryId'] })
+  .refine(priceStated, PRICE_MESSAGE);
 
 /** Resolves the listing's category, creating a pending user-suggested subcategory when needed. */
 function resolveCategory(userId: number, input: { categoryId?: number; suggestedCategory?: { parentId: number; name: string } }) {
@@ -166,8 +178,25 @@ function replaceMedia(listingId: number, media: z.infer<typeof mediaSchema>[]) {
 
 vendorRouter.get('/listings', (req, res) => {
   const g = myGallery(currentUser(req).id);
-  const rows = db.select().from(listings).where(eq(listings.galleryId, g.id)).orderBy(desc(listings.createdAt)).all();
+  const rows = db
+    .select()
+    .from(listings)
+    .where(eq(listings.galleryId, g.id))
+    .orderBy(asc(listings.sortOrder), desc(listings.createdAt))
+    .all();
   res.json({ listings: hydrateListings(rows) });
+});
+
+/** Saves the gallery's chosen order (ids first to last); it is also the order on the public gallery page. */
+vendorRouter.put('/listings/order', (req, res) => {
+  const { ids } = z.object({ ids: z.array(z.number().int().positive()).max(2000) }).parse(req.body);
+  const g = myGallery(currentUser(req).id);
+  const own = new Set(db.select({ id: listings.id }).from(listings).where(eq(listings.galleryId, g.id)).all().map((r) => r.id));
+  if (ids.some((id) => !own.has(id)) || new Set(ids).size !== ids.length) throw badRequest('Unknown or repeated listing in the new order');
+  db.transaction((tx) => {
+    ids.forEach((id, i) => tx.update(listings).set({ sortOrder: i + 1 }).where(eq(listings.id, id)).run());
+  });
+  res.json({ ok: true });
 });
 
 vendorRouter.get('/listings/:id', (req, res) => {
@@ -186,10 +215,13 @@ vendorRouter.post('/listings', (req, res) => {
   const created = db.transaction(() => {
     const cat = resolveCategory(user.id, body);
     const { media, suggestedCategory: _s, categoryId: _c, ...fields } = body;
+    // New works go to the top of the gallery's own ordering.
+    const first = db.select({ min: sql<number | null>`min(${listings.sortOrder})` }).from(listings).where(eq(listings.galleryId, g.id)).get()?.min;
     const l = db
       .insert(listings)
       .values({
         ...fields,
+        sortOrder: (first ?? 1) - 1,
         categoryId: cat.id,
         originCountry: fields.originCountry ?? g.country,
         galleryId: g.id,
@@ -211,7 +243,7 @@ vendorRouter.patch('/listings/:id', (req, res) => {
   const existing = db.select().from(listings).where(and(eq(listings.id, Number(req.params.id)), eq(listings.galleryId, g.id))).get();
   if (!existing) throw notFound('Listing not found');
   if (['reserved', 'sold'].includes(existing.status)) throw conflict('Listings with an open order cannot be edited');
-  const parsed = listingFields.partial().extend({ status: z.enum(['draft', 'active', 'archived']).optional() }).parse(req.body);
+  const parsed = listingFields.partial().extend({ status: z.enum(['draft', 'active', 'hidden', 'archived']).optional() }).parse(req.body);
   // Only apply keys the client actually sent, so schema defaults never overwrite stored values.
   const body = Object.fromEntries(Object.entries(parsed).filter(([k]) => k in (req.body ?? {}))) as typeof parsed;
   const updated = db.transaction(() => {
@@ -220,19 +252,80 @@ vendorRouter.patch('/listings/:id', (req, res) => {
     if (categoryId || suggestedCategory) patch.categoryId = resolveCategory(user.id, { categoryId, suggestedCategory }).id;
     if (media) replaceMedia(existing.id, media);
     if (patch.status === 'active' && !(media ?? mediaFor(existing.id)).length) throw badRequest('Add at least one image to publish');
+    if (!priceStated({ priceOnRequest: patch.priceOnRequest ?? existing.priceOnRequest, priceCents: patch.priceCents ?? existing.priceCents })) {
+      throw badRequest(PRICE_MESSAGE.message);
+    }
     return db.update(listings).set(patch).where(eq(listings.id, existing.id)).returning().get();
   });
   audit(req, 'listing.update', 'listing', existing.id, { fields: Object.keys(body) });
   res.json({ listing: updated });
 });
 
+/**
+ * Permanently deletes a work. Works with any order are kept, because orders, reviews and the escrow
+ * ledger refer to them; the gallery can hide those instead.
+ */
 vendorRouter.delete('/listings/:id', (req, res) => {
   const g = myGallery(currentUser(req).id);
   const existing = db.select().from(listings).where(and(eq(listings.id, Number(req.params.id)), eq(listings.galleryId, g.id))).get();
   if (!existing) throw notFound('Listing not found');
-  if (['reserved', 'sold'].includes(existing.status)) throw conflict('Listings with an order cannot be removed');
-  db.update(listings).set({ status: 'archived' }).where(eq(listings.id, existing.id)).run();
-  audit(req, 'listing.archive', 'listing', existing.id);
+  const hasOrders = db.select({ id: orders.id }).from(orders).where(eq(orders.listingId, existing.id)).limit(1).get();
+  if (hasOrders) throw conflict('This work has an order, so it must stay in your records. You can hide it instead.');
+  const media = mediaFor(existing.id);
+  db.transaction((tx) => {
+    tx.update(galleries).set({ bannerListingId: null }).where(eq(galleries.bannerListingId, existing.id)).run();
+    tx.delete(listings).where(eq(listings.id, existing.id)).run(); // media, questions and enquiries cascade
+  });
+  removeUnusedUploads(media.flatMap((m) => [m.url, m.thumbUrl]));
+  audit(req, 'listing.delete', 'listing', existing.id, { title: existing.title });
+  res.json({ ok: true });
+});
+
+/** Deletes uploaded files that no listing or gallery uses any more (best effort). */
+function removeUnusedUploads(urls: string[]) {
+  for (const url of new Set(urls)) {
+    const stillUsed =
+      db.select({ id: listingMedia.id }).from(listingMedia).where(sql`${listingMedia.url} = ${url} or ${listingMedia.thumbUrl} = ${url}`).limit(1).get() ||
+      db.select({ id: galleries.id }).from(galleries).where(eq(galleries.coverUrl, url)).limit(1).get();
+    if (stillUsed) continue;
+    fs.promises.rm(path.join(config.uploadDir, path.basename(url)), { force: true }).catch(() => {});
+  }
+}
+
+/** Private purchase enquiries for this gallery's works, newest first. */
+vendorRouter.get('/enquiries', (req, res) => {
+  const g = myGallery(currentUser(req).id);
+  const rows = db
+    .select({
+      id: enquiries.id,
+      message: enquiries.message,
+      status: enquiries.status,
+      createdAt: enquiries.createdAt,
+      buyerName: users.name,
+      buyerEmail: users.email,
+      buyerCountry: users.country,
+      listingTitle: listings.title,
+      listingSlug: listings.slug,
+    })
+    .from(enquiries)
+    .innerJoin(users, eq(users.id, enquiries.buyerId))
+    .innerJoin(listings, eq(listings.id, enquiries.listingId))
+    .where(eq(enquiries.galleryId, g.id))
+    .orderBy(desc(enquiries.id))
+    .all();
+  res.json({ enquiries: rows, unread: rows.filter((r) => r.status === 'new').length });
+});
+
+vendorRouter.patch('/enquiries/:id', (req, res) => {
+  const { status } = z.object({ status: z.enum(ENQUIRY_STATUS) }).parse(req.body);
+  const g = myGallery(currentUser(req).id);
+  const updated = db
+    .update(enquiries)
+    .set({ status })
+    .where(and(eq(enquiries.id, Number(req.params.id)), eq(enquiries.galleryId, g.id)))
+    .returning({ id: enquiries.id })
+    .get();
+  if (!updated) throw notFound('Enquiry not found');
   res.json({ ok: true });
 });
 

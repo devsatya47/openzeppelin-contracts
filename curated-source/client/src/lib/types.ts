@@ -17,7 +17,7 @@ export type GalleryStatus = 'pending' | 'approved' | 'rejected' | 'suspended';
 
 export type Media = { id?: number; kind: 'image' | 'video'; url: string; thumbUrl: string; width: number | null; height: number | null };
 
-export type ListingStatus = 'draft' | 'active' | 'reserved' | 'sold' | 'archived';
+export type ListingStatus = 'draft' | 'active' | 'hidden' | 'reserved' | 'sold' | 'archived';
 
 export type Listing = {
   id: number;
@@ -40,6 +40,9 @@ export type Listing = {
   certificateOfAuthenticity: boolean;
   status: ListingStatus;
   featured: boolean;
+  /** Price is not shown publicly (priceCents is 0); collectors send an enquiry instead. */
+  priceOnRequest: boolean;
+  sortOrder: number;
   views: number;
   categoryId: number;
   galleryId: number;

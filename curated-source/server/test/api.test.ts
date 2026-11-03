@@ -208,6 +208,62 @@ test('account security: password and email changes, session revocation, lockout'
   assert.equal((await api('POST', '/auth/login', { email: 'bea@t.io', password: 'NewPassword#2' })).status, 200);
 });
 
+test('gallery controls: order, hide, delete, price on request, enquiries, banner', async () => {
+  const seller = await login('seller@t.io');
+  const cats = (await api('GET', '/categories')).body.categories;
+  const media = (await api('GET', '/vendor/listings', undefined, seller)).body.listings[0].cover;
+  const make = async (title: string, extra: object = {}) =>
+    (await api('POST', '/vendor/listings', { title, artist: 'A. Painter', medium: 'Oil', priceCents: 200_000, shippingDomesticCents: 0, shippingInternationalCents: 0, categoryId: cats[0].id, media: [media], ...extra }, seller)).body.listing;
+  const a = await make('Order A');
+  const b = await make('Order B');
+  const por = await make('Secret Price', { priceOnRequest: true, priceCents: 0 });
+  const slug = (await api('GET', '/vendor/gallery', undefined, seller)).body.gallery.slug;
+  const publicTitles = async () => (await api('GET', `/galleries/${slug}`)).body.listings.map((l: any) => l.title);
+
+  // New works go first; a saved order is used on the public gallery page.
+  assert.deepEqual((await publicTitles()).slice(0, 3), ['Secret Price', 'Order B', 'Order A']);
+  const ids = (await api('GET', '/vendor/listings', undefined, seller)).body.listings.map((l: any) => l.id);
+  const reordered = [a.id, ...ids.filter((id: number) => id !== a.id)];
+  assert.equal((await api('PUT', '/vendor/listings/order', { ids: reordered }, seller)).status, 200);
+  assert.equal((await publicTitles())[0], 'Order A');
+  assert.equal((await api('PUT', '/vendor/listings/order', { ids: [999_999] }, seller)).status, 400, 'only own listings');
+
+  // Hide / show
+  await api('PATCH', `/vendor/listings/${b.id}`, { status: 'hidden' }, seller);
+  assert.ok(!(await publicTitles()).includes('Order B'));
+  assert.equal((await api('GET', `/listings/${b.slug}`)).status, 404, 'hidden works are not public');
+  await api('PATCH', `/vendor/listings/${b.id}`, { status: 'active' }, seller);
+  assert.ok((await publicTitles()).includes('Order B'));
+
+  // Price on request: no public price, no checkout, private enquiries
+  assert.equal((await api('POST', '/vendor/listings', { title: 'No price', artist: 'A', medium: 'Oil', priceCents: 0, shippingDomesticCents: 0, shippingInternationalCents: 0, categoryId: cats[0].id, media: [media] }, seller)).status, 400);
+  const pub = (await api('GET', `/listings/${por.slug}`)).body.listing;
+  assert.equal(pub.priceOnRequest, true);
+  assert.equal(pub.priceCents, 0);
+  const buyer = (await api('POST', '/auth/register', { name: 'Ena Quiry', email: 'ena@t.io', password: 'Password#1' })).body.token;
+  const address = { fullName: 'Ena', line1: '1 St', city: 'Leeds', postalCode: 'LS1', country: 'GB' };
+  assert.equal((await api('POST', '/orders', { listingId: por.id, shippingAddress: address, acceptTerms: true }, buyer)).status, 400);
+  assert.equal((await api('POST', `/listings/${a.id}/enquiries`, { message: 'Is this still available?' }, buyer)).status, 400, 'priced works are bought online');
+  assert.equal((await api('POST', `/listings/${por.id}/enquiries`, { message: 'Could you share the price please?' }, buyer)).status, 201);
+  const inbox = (await api('GET', '/vendor/enquiries', undefined, seller)).body;
+  assert.equal(inbox.unread, 1);
+  assert.equal(inbox.enquiries[0].buyerEmail, 'ena@t.io');
+  assert.equal((await api('PATCH', `/vendor/enquiries/${inbox.enquiries[0].id}`, { status: 'replied' }, seller)).status, 200);
+
+  // Banner: one of the gallery's own works
+  assert.equal((await api('PATCH', '/vendor/gallery', { bannerListingId: a.id }, seller)).status, 200);
+  const g = (await api('GET', `/galleries/${slug}`)).body.gallery;
+  assert.equal(g.bannerWork.slug, a.slug);
+  assert.ok(g.bannerUrl.startsWith('/uploads/'));
+
+  // Delete: works with orders are kept; others are removed and leave the banner
+  const sold = (await api('GET', '/vendor/listings', undefined, seller)).body.listings.find((l: any) => l.title === 'Gold Field');
+  assert.equal((await api('DELETE', `/vendor/listings/${sold.id}`, undefined, seller)).status, 409);
+  assert.equal((await api('DELETE', `/vendor/listings/${a.id}`, undefined, seller)).status, 200);
+  assert.equal((await api('GET', `/listings/${a.slug}`)).status, 404);
+  assert.equal((await api('GET', `/galleries/${slug}`)).body.gallery.bannerWork, null);
+});
+
 test('Google sign-in: sign up, sign in again, link by email, staff refused, state checked', async () => {
   // Play Google's part: every authorization code maps to a Google profile.
   const profiles: Record<string, object> = {
