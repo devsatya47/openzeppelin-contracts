@@ -1,4 +1,4 @@
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { MapPin } from 'lucide-react';
 import { Page } from '../components/Layout';
 import { ListingGrid } from '../components/ListingCard';
@@ -11,7 +11,7 @@ import { useApi, useDocumentTitle } from '../lib/hooks';
 import type { Listing } from '../lib/types';
 
 type Resp = {
-  gallery: { id: number; name: string; tagline: string; bio: string; location: string; coverUrl: string | null; rating: number | null; reviewCount: number; createdAt: string };
+  gallery: { id: number; name: string; tagline: string; bio: string; location: string; coverUrl: string | null; bannerUrl: string | null; bannerWork: { title: string; slug: string; artist: string } | null; rating: number | null; reviewCount: number; createdAt: string };
   listings: Listing[];
   reviews: { id: number; rating: number; body: string; createdAt: string; buyer: string; listing: string }[];
 };
@@ -26,7 +26,7 @@ export default function GalleryPage() {
   return (
     <>
       <section className="relative -mt-20 flex min-h-[60vh] items-end overflow-hidden">
-        {g.coverUrl && <img src={mediaUrl(g.coverUrl)} alt="" className="absolute inset-0 h-full w-full object-cover opacity-50" />}
+        {g.bannerUrl && <img src={mediaUrl(g.bannerUrl)} alt="" className="absolute inset-0 h-full w-full object-cover opacity-55" />}
         <div className="absolute inset-0 bg-gradient-to-t from-ink via-ink/50 to-ink/20" />
         <Page className="relative pb-16 pt-40">
           <div className="eyebrow mb-4 flex items-center gap-2"><MapPin size={12} /> {g.location}</div>
@@ -37,8 +37,13 @@ export default function GalleryPage() {
               <Stars value={g.rating} /> {g.rating.toFixed(1)} · {g.reviewCount} collector review{g.reviewCount === 1 ? '' : 's'}
             </div>
           )}
-          <div className="mt-6">
-            <ShareButton path={`/galleries/${slug}`} title={g.name} text={g.tagline} image={g.coverUrl} label="Share gallery" />
+          <div className="mt-6 flex flex-wrap items-center gap-6">
+            <ShareButton path={`/galleries/${slug}`} title={g.name} text={g.tagline} image={g.bannerUrl} label="Share gallery" />
+            {g.bannerWork && (
+              <Link to={`/listing/${g.bannerWork.slug}`} className="text-xs text-faint hover:text-gold">
+                Featured: <span className="font-serif italic">{g.bannerWork.title}</span> · {g.bannerWork.artist}
+              </Link>
+            )}
           </div>
         </Page>
       </section>

@@ -34,6 +34,14 @@ export const config = {
     google: { clientId: env.GOOGLE_CLIENT_ID ?? '', clientSecret: env.GOOGLE_CLIENT_SECRET ?? '' },
     facebook: { appId: env.FACEBOOK_APP_ID ?? '', appSecret: env.FACEBOOK_APP_SECRET ?? '' },
   },
+  // Stripe payments. Without a secret key the checkout runs in demo mode and no money moves.
+  stripe: {
+    secretKey: env.STRIPE_SECRET_KEY?.trim() ?? '',
+    publishableKey: env.STRIPE_PUBLISHABLE_KEY?.trim() ?? '',
+    webhookSecret: env.STRIPE_WEBHOOK_SECRET?.trim() ?? '',
+    // Country of the platform's own Stripe account (FITMORF LTD, United Kingdom).
+    platformCountry: (env.STRIPE_PLATFORM_COUNTRY ?? 'GB').toUpperCase(),
+  },
   // One-click demo sign-in buttons on the login page. Off in production unless explicitly enabled.
   showDemoLogins: env.SHOW_DEMO_LOGINS ? env.SHOW_DEMO_LOGINS === 'true' : !isProd,
   // Load the demo catalogue on boot when the database is empty (used for one-click hosted deployments).

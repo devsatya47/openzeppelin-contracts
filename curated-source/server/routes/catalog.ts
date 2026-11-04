@@ -2,11 +2,12 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { and, asc, avg, count, desc, eq, gte, inArray, like, lte, or, sql, type SQL } from 'drizzle-orm';
 import { db } from '../db/client';
-import { categories, galleries, listings, questions, reviews, users } from '../db/schema';
-import { categoryWithDescendants, hydrateListing, hydrateListings, mediaFor } from '../lib/listings';
+import { categories, enquiries, galleries, listingMedia, listings, questions, reviews, users } from '../db/schema';
+import { config } from '../config';
+import { categoryWithDescendants, hydrateListing, hydrateListings, mediaFor, type ListingRow } from '../lib/listings';
 import { currentUser, requirePermission } from '../lib/auth';
 import { can } from '../lib/rbac';
-import { notFound } from '../lib/errors';
+import { badRequest, notFound } from '../lib/errors';
 import { shippingFor } from '../lib/util';
 import { audit } from '../lib/audit';
 
@@ -15,6 +16,25 @@ export const catalogRouter = Router();
 const PUBLIC_STATUSES = ['active', 'reserved'] as const;
 const publicListing = () => and(eq(galleries.status, 'approved'), inArray(listings.status, [...PUBLIC_STATUSES]));
 const longestEdge = sql<number>`max(coalesce(${listings.widthCm}, 0), coalesce(${listings.heightCm}, 0))`;
+/** Price-on-request works never expose their price publicly. */
+const maskPrice = <T extends { priceOnRequest: boolean; priceCents: number }>(l: T): T => (l.priceOnRequest ? { ...l, priceCents: 0 } : l);
+const publicListings = (rows: ListingRow[]) => hydrateListings(rows).map(maskPrice);
+
+/** The gallery's banner: its chosen featured work (if still on view), otherwise the uploaded cover image. */
+function galleryBanner(g: { coverUrl: string | null; bannerListingId: number | null }) {
+  if (g.bannerListingId) {
+    const work = db
+      .select({ title: listings.title, slug: listings.slug, artist: listings.artist, url: listingMedia.url })
+      .from(listings)
+      .innerJoin(listingMedia, eq(listingMedia.listingId, listings.id))
+      .where(and(eq(listings.id, g.bannerListingId), inArray(listings.status, [...PUBLIC_STATUSES, 'sold']), eq(listingMedia.kind, 'image')))
+      .orderBy(asc(listingMedia.position))
+      .get();
+    if (work) return { bannerUrl: work.url, bannerWork: { title: work.title, slug: work.slug, artist: work.artist } };
+  }
+  return { bannerUrl: g.coverUrl, bannerWork: null };
+}
+
 const SIZE_BUCKETS = { small: [0, 50], medium: [50, 120], large: [120, 100000] } as const;
 
 /** Category tree (approved only) with counts of publicly visible listings, rolled up to parents. */
@@ -52,6 +72,7 @@ catalogRouter.get('/galleries', (req, res) => {
       tagline: galleries.tagline,
       location: galleries.location,
       coverUrl: galleries.coverUrl,
+      bannerListingId: galleries.bannerListingId,
       featured: galleries.featured,
       listingCount: sql<number>`(select count(*) from listings l where l.gallery_id = ${galleries.id} and l.status in ('active','reserved'))`,
       rating: sql<number | null>`(select avg(rating) from reviews r where r.gallery_id = ${galleries.id})`,
@@ -60,7 +81,7 @@ catalogRouter.get('/galleries', (req, res) => {
     .where(and(eq(galleries.status, 'approved'), featuredOnly ? eq(galleries.featured, true) : undefined))
     .orderBy(desc(galleries.featured), asc(galleries.name))
     .all();
-  res.json({ galleries: rows });
+  res.json({ galleries: rows.map(({ bannerListingId, ...g }) => ({ ...g, coverUrl: galleryBanner({ coverUrl: g.coverUrl, bannerListingId }).bannerUrl })) });
 });
 
 catalogRouter.get('/galleries/:slug', (req, res) => {
@@ -71,7 +92,8 @@ catalogRouter.get('/galleries/:slug', (req, res) => {
     .from(listings)
     .innerJoin(galleries, eq(galleries.id, listings.galleryId))
     .where(and(eq(listings.galleryId, gallery.id), publicListing()))
-    .orderBy(desc(listings.featured), desc(listings.createdAt))
+    // The gallery's own drag-and-drop order from its inventory.
+    .orderBy(asc(listings.sortOrder), desc(listings.createdAt))
     .all()
     .map((r) => r.l);
   const reviewRows = db
@@ -84,10 +106,10 @@ catalogRouter.get('/galleries/:slug', (req, res) => {
     .limit(20)
     .all();
   const rating = db.select({ avg: avg(reviews.rating), n: count() }).from(reviews).where(eq(reviews.galleryId, gallery.id)).get();
-  const { reviewNote: _note, ownerId: _owner, ...publicGallery } = gallery;
+  const { reviewNote: _note, ownerId: _owner, stripeAccountId: _acct, stripePayoutsEnabled: _payouts, ...publicGallery } = gallery;
   res.json({
-    gallery: { ...publicGallery, rating: rating?.avg ? Number(rating.avg) : null, reviewCount: rating?.n ?? 0 },
-    listings: hydrateListings(rows),
+    gallery: { ...publicGallery, ...galleryBanner(gallery), rating: rating?.avg ? Number(rating.avg) : null, reviewCount: rating?.n ?? 0 },
+    listings: publicListings(rows),
     reviews: reviewRows,
   });
 });
@@ -121,6 +143,7 @@ catalogRouter.get('/listings', (req, res) => {
   }
   if (q.gallery) conds.push(inArray(galleries.slug, q.gallery.split(',')));
   if (q.medium) conds.push(inArray(listings.medium, q.medium.split(',')));
+  if (q.minPrice != null || q.maxPrice != null) conds.push(eq(listings.priceOnRequest, false)); // no public price to filter on
   if (q.minPrice != null) conds.push(gte(listings.priceCents, Math.round(q.minPrice * 100)));
   if (q.maxPrice != null) conds.push(lte(listings.priceCents, Math.round(q.maxPrice * 100)));
   if (q.size) {
@@ -132,8 +155,9 @@ catalogRouter.get('/listings', (req, res) => {
 
   const order = {
     newest: [desc(listings.createdAt), desc(listings.id)],
-    price_asc: [asc(listings.priceCents)],
-    price_desc: [desc(listings.priceCents)],
+    // Price-on-request works sort after priced ones either way.
+    price_asc: [asc(listings.priceOnRequest), asc(listings.priceCents)],
+    price_desc: [asc(listings.priceOnRequest), desc(listings.priceCents)],
     popular: [desc(listings.views)],
   }[q.sort];
 
@@ -169,11 +193,11 @@ catalogRouter.get('/listings', (req, res) => {
     .select({ min: sql<number>`min(${listings.priceCents})`, max: sql<number>`max(${listings.priceCents})` })
     .from(listings)
     .innerJoin(galleries, eq(galleries.id, listings.galleryId))
-    .where(publicListing())
+    .where(and(publicListing(), eq(listings.priceOnRequest, false)))
     .get();
 
   res.json({
-    listings: hydrateListings(rows),
+    listings: publicListings(rows),
     total,
     page: q.page,
     pageSize: q.pageSize,
@@ -222,7 +246,7 @@ catalogRouter.get('/search/suggest', (req, res) => {
         sublabel: `${l.artist} · ${l.gallery?.name ?? ''}`,
         slug: l.slug,
         thumbUrl: l.cover?.thumbUrl ?? null,
-        priceCents: l.priceCents,
+        priceCents: l.priceOnRequest ? null : l.priceCents,
       })),
       ...artists.map((a) => ({ type: 'artist' as const, label: a.artist, sublabel: 'Artist', slug: a.artist })),
       ...gals.map((g) => ({ type: 'gallery' as const, label: g.name, sublabel: 'Gallery', slug: g.slug })),
@@ -279,7 +303,7 @@ catalogRouter.get('/listings/:slug', (req, res) => {
 
   res.json({
     listing: {
-      ...hydrateListing(row.l),
+      ...(isOwner || isStaff ? hydrateListing(row.l) : maskPrice(hydrateListing(row.l))),
       media: mediaFor(row.l.id),
       categoryPath: categoryPath(row.l.categoryId),
       gallery: {
@@ -294,7 +318,7 @@ catalogRouter.get('/listings/:slug', (req, res) => {
       isOwner: !!isOwner,
     },
     questions: qa,
-    related: hydrateListings(related),
+    related: publicListings(related),
   });
 });
 
@@ -304,6 +328,35 @@ catalogRouter.get('/listings/:id/shipping', (req, res) => {
   if (!listing) throw notFound('Listing not found');
   const s = shippingFor(listing, country);
   res.json({ region: s.region, shippingCents: s.cents, totalCents: listing.priceCents + s.cents, currency: listing.currency });
+});
+
+/** Private purchase enquiry for a price-on-request (or above-cap) work; only the gallery sees it. */
+catalogRouter.post('/listings/:id/enquiries', requirePermission('order:create'), (req, res) => {
+  const body = z.object({ message: z.string().trim().min(10, 'Please write at least a short message').max(2000) }).parse(req.body);
+  const user = currentUser(req);
+  const row = db
+    .select({ l: listings, g: galleries })
+    .from(listings)
+    .innerJoin(galleries, eq(galleries.id, listings.galleryId))
+    .where(eq(listings.id, Number(req.params.id)))
+    .get();
+  if (!row || row.g.status !== 'approved' || !['active', 'reserved'].includes(row.l.status)) throw notFound('Listing not found');
+  if (row.g.ownerId === user.id) throw badRequest('This is your own work');
+  if (!row.l.priceOnRequest && row.l.priceCents <= config.maxPriceCents) throw badRequest('This work can be bought online');
+  const since = new Date(Date.now() - 24 * 3_600_000).toISOString();
+  const recent = db
+    .select({ n: count() })
+    .from(enquiries)
+    .where(and(eq(enquiries.listingId, row.l.id), eq(enquiries.buyerId, user.id), gte(enquiries.createdAt, since)))
+    .get()?.n ?? 0;
+  if (recent >= 3) throw badRequest('You have already sent enquiries about this work today. The gallery will reply by email.');
+  const created = db
+    .insert(enquiries)
+    .values({ listingId: row.l.id, galleryId: row.g.id, buyerId: user.id, message: body.message })
+    .returning({ id: enquiries.id })
+    .get();
+  audit(req, 'enquiry.create', 'listing', row.l.id, { enquiryId: created.id });
+  res.status(201).json({ ok: true });
 });
 
 catalogRouter.post('/listings/:id/questions', requirePermission('question:ask'), (req, res) => {

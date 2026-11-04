@@ -56,7 +56,7 @@ export function OrderPill({ status }: { status: OrderStatus }) {
 const GENERIC_TONE: Record<string, keyof typeof TONES> = {
   approved: 'ok', active: 'ok', paid: 'ok', open: 'bad',
   pending: 'warn', requested: 'warn', reserved: 'gold', draft: 'mute',
-  rejected: 'bad', suspended: 'bad', sold: 'gold', archived: 'mute',
+  rejected: 'bad', suspended: 'bad', sold: 'gold', archived: 'mute', hidden: 'mute', new: 'gold', replied: 'ok', closed: 'mute',
   resolved_release: 'ok', resolved_refund: 'warn',
 };
 export function StatusPill({ status }: { status: string }) {

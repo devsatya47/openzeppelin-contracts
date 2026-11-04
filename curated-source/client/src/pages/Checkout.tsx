@@ -9,7 +9,7 @@ import { AgreeCheckbox } from '../components/AgreeCheckbox';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { COUNTRIES, money } from '../lib/format';
-import { useApi, useDocumentTitle } from '../lib/hooks';
+import { useApi, useDocumentTitle, usePlatformConfig } from '../lib/hooks';
 import type { ListingDetail, Order, ShippingAddress } from '../lib/types';
 
 export default function Checkout() {
@@ -24,6 +24,8 @@ export default function Checkout() {
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [agreed, setAgreed] = useState(false);
+  const { payments } = usePlatformConfig();
+  const stripe = payments === 'stripe';
 
   if (loadError) return <Page className="py-20"><ErrorNote error={loadError} /></Page>;
   if (!listing) return <Spinner />;
@@ -43,9 +45,22 @@ export default function Checkout() {
           acceptTerms: agreed,
         }, });
       setOrder(r.order);
+      if (stripe) return void (await goToStripe(r.order));
     } catch (err) {
       setError(err);
-    } finally {
+    }
+    setBusy(false);
+  };
+
+  /** Sends the buyer to Stripe's secure payment page; Stripe brings them back to the order page. */
+  const goToStripe = async (o: Order) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const { url } = await api<{ url: string }>(`/orders/${o.id}/checkout`, { body: {} });
+      window.location.assign(url);
+    } catch (err) {
+      setError(err);
       setBusy(false);
     }
   };
@@ -94,13 +109,19 @@ export default function Checkout() {
                 International orders may be subject to import duties payable on delivery.
               </AgreeCheckbox>
               <ErrorNote error={error} />
-              <button className="btn-gold" disabled={busy || !agreed}>{busy ? 'Reserving…' : 'Reserve & continue to payment'}</button>
+              <button className="btn-gold" disabled={busy || !agreed}>{busy ? (stripe ? 'Opening secure payment…' : 'Reserving…') : 'Reserve & continue to payment'}</button>
               <p className="text-xs text-faint">The piece is reserved for you for 30 minutes while you complete payment.</p>
             </form>
           ) : (
             <div className="space-y-6">
               <h2 className="text-3xl">2. Payment into escrow</h2>
               <Notice>Order {order.reference} reserved. Complete payment to secure the piece.</Notice>
+              {stripe ? (
+                <div className="card space-y-3 p-6 text-sm text-mute">
+                  <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-mute"><Lock size={12} /> Secure payment by Stripe</div>
+                  <p>You pay on Stripe’s secure page by card, Apple Pay, Google Pay or Link. Curated Art never sees your card details.</p>
+                </div>
+              ) : (
               <div className="card space-y-4 p-6">
                 <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-mute"><Lock size={12} /> Card payment</div>
                 <input className="field" defaultValue="4242 4242 4242 4242" aria-label="Card number" readOnly />
@@ -110,8 +131,9 @@ export default function Checkout() {
                 </div>
                 <p className="text-xs text-faint">Demo mode — no card is charged. In production, wire this step to your payment provider (see README).</p>
               </div>
+              )}
               <ErrorNote error={error} />
-              <button onClick={pay} className="btn-gold w-full py-4" disabled={busy}>
+              <button onClick={stripe ? () => goToStripe(order) : pay} className="btn-gold w-full py-4" disabled={busy}>
                 <ShieldCheck size={14} /> {busy ? 'Securing…' : `Pay ${money(order.totalCents, order.currency)} into escrow`}
               </button>
               <button onClick={() => api(`/orders/${order.id}/actions/cancel`, { body: {} }).then(() => navigate(`/listing/${listing.slug}`))} className="text-xs uppercase tracking-[0.2em] text-faint hover:text-bone">
