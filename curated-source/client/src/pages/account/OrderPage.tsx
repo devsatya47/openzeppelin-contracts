@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { ExternalLink, ShieldCheck, Truck } from 'lucide-react';
 import { CARRIERS } from '../../../../shared/carriers';
@@ -8,7 +8,7 @@ import { Page } from '../../components/Layout';
 import { ErrorNote, Field, Modal, Notice, OrderPill, Spinner, Stars } from '../../components/ui';
 import { api } from '../../lib/api';
 import { countryName, date, money, ORDER_STATUS } from '../../lib/format';
-import { useApi, useDocumentTitle } from '../../lib/hooks';
+import { useApi, useDocumentTitle, usePlatformConfig } from '../../lib/hooks';
 import type { OrderAction, OrderDetail } from '../../lib/types';
 
 const ACTIONS: Record<OrderAction, { label: string; style: string; modal?: 'dispatch' | 'reason' | 'note'; confirm?: string }> = {
@@ -61,6 +61,29 @@ export default function OrderPage() {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<unknown>(null);
   useDocumentTitle(data ? `Order ${data.order.reference}` : 'Order');
+  const { payments } = usePlatformConfig();
+  const returnedFromStripe = params.get('paid') === '1';
+  const [checking, setChecking] = useState(returnedFromStripe);
+  // Back from Stripe: confirm the payment directly, in case Stripe's notification hasn't arrived yet.
+  useEffect(() => {
+    if (!returnedFromStripe) return;
+    let tries = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    const check = async () => {
+      try {
+        const r = await api<{ status: string }>(`/orders/${id}/payment/sync`, { body: {} });
+        if (r.status !== 'pending' || ++tries >= 5) {
+          setChecking(false);
+          return reload();
+        }
+      } catch {
+        return setChecking(false);
+      }
+      timer = setTimeout(check, 2000);
+    };
+    check();
+    return () => clearTimeout(timer);
+  }, [id, returnedFromStripe, reload]);
 
   if (loading && !data) return <Spinner />;
   if (!data) return <Page className="py-20"><ErrorNote error={error} /></Page>;
@@ -75,6 +98,15 @@ export default function OrderPage() {
     if (meta.confirm && !window.confirm(meta.confirm)) return;
     setBusy(true);
     setActionError(null);
+    if (action === 'pay' && payments === 'stripe') {
+      try {
+        const { url } = await api<{ url: string }>(`/orders/${o.id}/checkout`, { body: {} });
+        return void window.location.assign(url);
+      } catch (err) {
+        setActionError(err);
+        return void setBusy(false);
+      }
+    }
     try {
       const body =
         meta.modal === 'dispatch'
@@ -109,7 +141,12 @@ export default function OrderPage() {
 
   return (
     <Page className="py-12">
-      {params.get('placed') && <div className="mb-8"><Notice tone="ok">Payment secured. Your acquisition is now protected in escrow.</Notice></div>}
+      {(params.get('placed') || (returnedFromStripe && o.status !== 'pending')) && (
+        <div className="mb-8"><Notice tone="ok">Payment secured. Your acquisition is now protected in escrow.</Notice></div>
+      )}
+      {returnedFromStripe && o.status === 'pending' && (
+        <div className="mb-8"><Notice>{checking ? 'Confirming your payment with Stripe…' : 'We have not received confirmation of your payment yet. If you paid, this page will update shortly. Please refresh in a minute.'}</Notice></div>
+      )}
       <div className="mb-10 flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="eyebrow mb-3">Order {o.reference}</div>

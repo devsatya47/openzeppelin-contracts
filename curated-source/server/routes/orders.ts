@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { and, asc, desc, eq, gte, inArray, lt, notInArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, lt, notInArray, or, sql } from 'drizzle-orm';
 import { db } from '../db/client';
 import { disputes, escrowTransactions, galleries, listings, orderEvents, orders, reviews, users } from '../db/schema';
 import { config } from '../config';
@@ -12,6 +12,7 @@ import { orderReference, shippingFor } from '../lib/util';
 import { audit } from '../lib/audit';
 import { trackingUrl } from '../../shared/carriers';
 import { acceptTermsSchema, POLICIES_VERSION } from '../lib/legal';
+import { checkoutUrl, closeCheckout, paymentsEnabled, refundPayment, syncPayment, transferToGallery } from '../lib/payments';
 
 export const ordersRouter = Router();
 
@@ -20,8 +21,14 @@ export const LINKED_PURCHASE_DAYS = 90;
 
 /** Releases reservations held by checkouts that were never paid. */
 export function expireStaleOrders() {
+  const now = new Date().toISOString();
   const cutoff = new Date(Date.now() - PENDING_TTL_MINUTES * 60_000).toISOString();
-  const stale = db.select().from(orders).where(and(eq(orders.status, 'pending'), lt(orders.createdAt, cutoff))).all();
+  // A reservation with an open Stripe payment page is kept until that page closes.
+  const stale = db
+    .select()
+    .from(orders)
+    .where(and(eq(orders.status, 'pending'), lt(orders.createdAt, cutoff), or(isNull(orders.paymentExpiresAt), lt(orders.paymentExpiresAt, now))))
+    .all();
   for (const o of stale) {
     db.transaction((tx) => {
       tx.update(orders).set({ status: 'cancelled', updatedAt: new Date().toISOString() }).where(eq(orders.id, o.id)).run();
@@ -164,7 +171,26 @@ ordersRouter.get('/:id', requireAuth, (req, res) => {
   });
 });
 
-ordersRouter.post('/:id/actions/:action', requireAuth, (req, res) => {
+const origin = (req: { protocol: string; get(h: string): string | undefined }) => `${req.protocol}://${req.get('host')}`;
+
+/** Opens Stripe's secure payment page for a pending order and returns its address. */
+ordersRouter.post('/:id/checkout', requireAuth, async (req, res) => {
+  const order = db.select().from(orders).where(eq(orders.id, Number(req.params.id))).get();
+  if (!order || order.buyerId !== currentUser(req).id) throw notFound('Order not found');
+  const url = await checkoutUrl(order, origin(req));
+  res.json({ url });
+});
+
+/** Called when the buyer returns from Stripe, in case the webhook has not arrived yet. */
+ordersRouter.post('/:id/payment/sync', requireAuth, async (req, res) => {
+  const order = db.select().from(orders).where(eq(orders.id, Number(req.params.id))).get();
+  if (!order || order.buyerId !== currentUser(req).id) throw notFound('Order not found');
+  await syncPayment(order);
+  const fresh = db.select({ status: orders.status }).from(orders).where(eq(orders.id, order.id)).get()!;
+  res.json({ status: fresh.status });
+});
+
+ordersRouter.post('/:id/actions/:action', requireAuth, async (req, res) => {
   const action = req.params.action as OrderAction;
   if (!(action in TRANSITIONS)) throw badRequest('Unknown action');
   const input = z
@@ -175,8 +201,26 @@ ordersRouter.post('/:id/actions/:action', requireAuth, (req, res) => {
       reason: z.string().trim().max(2000).optional(),
     })
     .parse(req.body ?? {});
-  const updated = transitionOrder(currentUser(req), Number(req.params.id), action, input);
+  const user = currentUser(req);
+  const order = db.select().from(orders).where(eq(orders.id, Number(req.params.id))).get();
+  if (!order) throw notFound('Order not found');
+
+  // Money moves through Stripe first; the escrow state only changes once that has succeeded.
+  if (paymentsEnabled() && availableActions(user, order).includes(action)) {
+    if (action === 'pay') throw badRequest('Please pay through the secure payment page');
+    if (action === 'cancel') await closeCheckout(order);
+    if (action === 'decline' || action === 'resolve_refund') await refundPayment(order);
+  }
+  const updated = transitionOrder(user, order.id, action, input);
   audit(req, `order.${action}`, 'order', updated.id, { status: updated.status, ...input });
+  if (action === 'release' || action === 'resolve_release') {
+    try {
+      await transferToGallery(updated.id);
+    } catch (err) {
+      // The sale stays released; the transfer is retried when the gallery's Stripe status is next refreshed.
+      console.error(`Stripe transfer for order ${updated.id} failed`, err);
+    }
+  }
   res.json({ order: updated });
 });
 

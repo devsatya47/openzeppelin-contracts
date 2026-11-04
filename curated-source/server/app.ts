@@ -16,6 +16,7 @@ import { catalogRouter } from './routes/catalog';
 import { ordersRouter } from './routes/orders';
 import { vendorRouter } from './routes/vendor';
 import { adminRouter } from './routes/admin';
+import { handleStripeEvent, paymentsEnabled, stripe } from './lib/payments';
 
 export function createApp() {
   const app = express();
@@ -36,6 +37,24 @@ export function createApp() {
   );
   app.use(compression());
   app.use(cors({ origin: config.corsOrigins, credentials: false }));
+  // Stripe signs the exact bytes it sends, so its webhook must read the raw body (before express.json).
+  app.post('/api/stripe/webhook', express.raw({ type: 'application/json', limit: '1mb' }), async (req, res) => {
+    const s = stripe();
+    if (!s || !config.stripe.webhookSecret) return void res.status(503).json({ error: 'Stripe webhooks are not configured' });
+    let event;
+    try {
+      event = s.webhooks.constructEvent(req.body, req.get('stripe-signature') ?? '', config.stripe.webhookSecret);
+    } catch {
+      return void res.status(400).json({ error: 'Invalid signature' });
+    }
+    try {
+      await handleStripeEvent(event);
+      res.json({ received: true });
+    } catch (err) {
+      console.error(`Stripe webhook ${event.type} failed`, err);
+      res.status(500).json({ error: 'Processing failed' }); // Stripe retries
+    }
+  });
   app.use(express.json({ limit: '1mb' }));
 
   const api = express.Router();
@@ -76,6 +95,7 @@ export function createApp() {
       maxPriceCents: config.maxPriceCents,
       showDemoLogins: config.showDemoLogins,
       oauthProviders: enabledProviders(),
+      payments: paymentsEnabled() ? 'stripe' : 'demo',
     }),
   );
   api.use('/auth/oauth', oauthRouter);

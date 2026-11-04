@@ -44,6 +44,10 @@ export const TRANSITIONS: Record<OrderAction, { from: OrderStatus[]; to: OrderSt
 
 type Order = typeof orders.$inferSelect;
 
+/** Caller for automatic transitions, such as a payment confirmed by Stripe. */
+export const SYSTEM = 'system' as const;
+export type Caller = AuthUser | typeof SYSTEM;
+
 export function actorsFor(user: AuthUser, order: Order): Actor[] {
   const actors: Actor[] = [];
   if (order.buyerId === user.id) actors.push('buyer');
@@ -64,13 +68,14 @@ export function availableActions(user: AuthUser, order: Order): OrderAction[] {
 export type TransitionInput = { note?: string; carrier?: string; trackingNumber?: string; reason?: string };
 
 /** Applies an escrow transition atomically, writing the order event and ledger entries. */
-export function transitionOrder(user: AuthUser, orderId: number, action: OrderAction, input: TransitionInput = {}) {
+export function transitionOrder(user: Caller, orderId: number, action: OrderAction, input: TransitionInput = {}) {
   return db.transaction((tx) => {
     const order = tx.select().from(orders).where(eq(orders.id, orderId)).get();
     if (!order) throw notFound('Order not found');
     const t = TRANSITIONS[action];
     if (!t) throw badRequest('Unknown action');
-    const actors = actorsFor(user, order);
+    const actors: Actor[] = user === SYSTEM ? ['buyer', 'seller', 'admin'] : actorsFor(user, order);
+    const actorId = user === SYSTEM ? null : user.id;
     if (!t.actors.some((a) => actors.includes(a))) throw forbidden();
     if (!t.from.includes(order.status)) {
       throw badRequest(`Cannot ${action.replace('_', ' ')} an order that is ${order.status.replace('_', ' ')}`);
@@ -83,7 +88,7 @@ export function transitionOrder(user: AuthUser, orderId: number, action: OrderAc
 
     switch (action) {
       case 'pay':
-        // Payment gateway capture would happen here; funds are held by the platform.
+        // With Stripe, this runs once Stripe confirms the payment (server/lib/payments.ts).
         tx.insert(escrowTransactions).values({ orderId, type: 'hold', amountCents: order.totalCents, reference: ref }).run();
         tx.update(listings).set({ status: 'sold' }).where(eq(listings.id, order.listingId)).run();
         note ??= 'Payment received and secured in escrow';
@@ -122,7 +127,7 @@ export function transitionOrder(user: AuthUser, orderId: number, action: OrderAc
       case 'dispute': {
         if (!input.reason || input.reason.trim().length < 10) throw badRequest('Please describe the issue (min 10 characters)');
         tx.insert(disputes)
-          .values({ orderId, openedById: user.id, reason: input.reason.trim(), previousStatus: order.status })
+          .values({ orderId, openedById: actorId!, reason: input.reason.trim(), previousStatus: order.status })
           .run();
         note = input.reason.trim();
         break;
@@ -134,7 +139,7 @@ export function transitionOrder(user: AuthUser, orderId: number, action: OrderAc
         .set({
           status: action === 'resolve_release' ? 'resolved_release' : 'resolved_refund',
           resolution: input.note ?? null,
-          resolvedById: user.id,
+          resolvedById: actorId,
           resolvedAt: nowIso(),
         })
         .where(and(eq(disputes.orderId, orderId), eq(disputes.status, 'open')))
@@ -142,7 +147,7 @@ export function transitionOrder(user: AuthUser, orderId: number, action: OrderAc
     }
 
     tx.update(orders).set(patch).where(eq(orders.id, orderId)).run();
-    tx.insert(orderEvents).values({ orderId, status: t.to, note, actorId: user.id }).run();
+    tx.insert(orderEvents).values({ orderId, status: t.to, note, actorId }).run();
     return { ...order, ...patch } as Order;
   });
 }

@@ -16,6 +16,7 @@ import { slugify, uniqueSuffix } from '../lib/util';
 import { audit } from '../lib/audit';
 import { acceptTermsSchema, POLICIES_VERSION } from '../lib/legal';
 import { withListings } from './orders';
+import { dashboardUrl, onboardingUrl, paymentsEnabled, refreshGalleryAccount } from '../lib/payments';
 
 export const vendorRouter = Router();
 
@@ -393,7 +394,40 @@ vendorRouter.get('/payouts', (req, res) => {
   });
 });
 
+const origin = (req: { protocol: string; get(h: string): string | undefined }) => `${req.protocol}://${req.get('host')}`;
+
+/** The gallery's Stripe account status (refreshed from Stripe). */
+vendorRouter.get('/stripe', async (req, res) => {
+  const g = myGallery(currentUser(req).id);
+  if (!paymentsEnabled()) return void res.json({ enabled: false });
+  res.json({ enabled: true, ...(await refreshGalleryAccount(g)) });
+});
+
+/** Starts or continues Stripe's sign-up for the gallery (identity and bank details are entered on Stripe). */
+vendorRouter.post('/stripe/onboard', requirePermission('payout:request'), async (req, res) => {
+  const user = currentUser(req);
+  const g = myGallery(user.id);
+  if (g.status !== 'approved') throw forbidden('Your gallery must be approved before connecting payouts');
+  try {
+    const url = await onboardingUrl(g, user.email, origin(req));
+    audit(req, 'gallery.stripe_onboard', 'gallery', g.id);
+    res.json({ url });
+  } catch (err) {
+    // Stripe explains unsupported countries and similar problems in plain language.
+    if (err && typeof err === 'object' && 'type' in err && String((err as { type: string }).type).startsWith('Stripe')) {
+      throw badRequest((err as unknown as Error).message);
+    }
+    throw err;
+  }
+});
+
+/** Opens the gallery's Stripe dashboard (payouts, bank account, tax forms). */
+vendorRouter.post('/stripe/dashboard', requirePermission('payout:request'), async (req, res) => {
+  res.json({ url: await dashboardUrl(myGallery(currentUser(req).id)) });
+});
+
 vendorRouter.post('/payouts', requirePermission('payout:request'), (req, res) => {
+  if (paymentsEnabled()) throw badRequest('Your earnings are sent to your Stripe account automatically when each sale completes');
   const body = z
     .object({
       amountCents: z.number().int().min(1000, 'Minimum withdrawal is $10'),

@@ -106,7 +106,7 @@ catalogRouter.get('/galleries/:slug', (req, res) => {
     .limit(20)
     .all();
   const rating = db.select({ avg: avg(reviews.rating), n: count() }).from(reviews).where(eq(reviews.galleryId, gallery.id)).get();
-  const { reviewNote: _note, ownerId: _owner, ...publicGallery } = gallery;
+  const { reviewNote: _note, ownerId: _owner, stripeAccountId: _acct, stripePayoutsEnabled: _payouts, ...publicGallery } = gallery;
   res.json({
     gallery: { ...publicGallery, ...galleryBanner(gallery), rating: rating?.avg ? Number(rating.avg) : null, reviewCount: rating?.n ?? 0 },
     listings: publicListings(rows),

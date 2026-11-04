@@ -126,6 +126,23 @@ Environment: `PUBLIC_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `FACEBOOK
 
 Instagram is not offered: Meta retired Instagram sign-in for personal accounts in December 2024.
 
+## Payments (Stripe)
+
+Curated Art uses Stripe Connect with *separate charges and transfers* (`server/lib/payments.ts`):
+
+1. **Buyer pays** on Stripe's hosted Checkout page (card, Apple Pay, Google Pay, Link). The money is held in the platform's Stripe balance and the order moves to `in_escrow`, confirmed by webhook or when the buyer returns.
+2. **Escrow is released:** the gallery's share (price + shipping − commission) is transferred to its Stripe Express account, which pays out to its bank. If the gallery hasn't connected Stripe yet, the transfer is sent as soon as it has.
+3. **Declines and refunds** return the full amount to the buyer's card. Cancelling a reservation closes its payment page.
+
+Galleries connect their bank under **Vendor portal → Payouts → Connect bank account with Stripe**. Stripe collects their identity and bank details, so they never reach this server.
+
+Environment variables (set in Render → Environment):
+- `STRIPE_SECRET_KEY` and `STRIPE_PUBLISHABLE_KEY`: test keys (`sk_test_`/`pk_test_`) first, then live keys
+- `STRIPE_WEBHOOK_SECRET`: from the webhook destination `https://www.curated-art.shop/api/stripe/webhook`, listening to `checkout.session.completed` and `checkout.session.async_payment_succeeded`
+- `STRIPE_PLATFORM_COUNTRY`: country of the platform's Stripe account (default `GB`)
+
+Test with card `4242 4242 4242 4242`, any future expiry date and any CVC.
+
 ## RBAC
 
 Permissions are declared in one matrix (`server/lib/rbac.ts`) and enforced by `requirePermission()` on every route. The client hides UI the same way, but the server is the source of truth.
@@ -185,7 +202,7 @@ To serve from a sub-folder, build with `VITE_BASE=/subfolder/` and adjust `Rewri
 
 ### Production checklist
 
-- **Payments:** `POST /api/orders/:id/actions/pay` is where a payment provider capture belongs. In demo mode, the checkout shows a test card and no money moves. Wire Stripe or similar there, preferably confirmed by webhook, before going live.
+- **Payments:** see *Payments (Stripe)* below. Without Stripe keys the checkout runs in demo mode and no money moves.
 - Set a strong `JWT_SECRET`. The server refuses to boot in production without one.
 - Back up `data/curated-source.db*` and `uploads/`. Uploads can move to object storage by swapping `server/lib/images.ts`.
 - SQLite in WAL mode is fine for a single instance. To scale horizontally, move to PostgreSQL by switching the Drizzle dialect.

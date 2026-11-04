@@ -14,6 +14,7 @@ process.env.MAX_FAILED_LOGINS = '5';
 process.env.MAX_FAILED_LOGINS_PER_IP = '1000';
 process.env.GOOGLE_CLIENT_ID = 'test-client';
 process.env.GOOGLE_CLIENT_SECRET = 'test-secret';
+process.env.STRIPE_WEBHOOK_SECRET = 'whsec_test';
 
 const { db } = await import('../db/client');
 const { runMigrations } = await import('../db/migrate');
@@ -21,6 +22,8 @@ const { createApp } = await import('../app');
 const { users, categories } = await import('../db/schema');
 const { hashPassword } = await import('../lib/auth');
 const { setOAuthHttp } = await import('../routes/oauth');
+const { setStripeClient } = await import('../lib/payments');
+const { default: Stripe } = await import('stripe');
 
 let server: Server;
 let base = '';
@@ -262,6 +265,150 @@ test('gallery controls: order, hide, delete, price on request, enquiries, banner
   assert.equal((await api('DELETE', `/vendor/listings/${a.id}`, undefined, seller)).status, 200);
   assert.equal((await api('GET', `/listings/${a.slug}`)).status, 404);
   assert.equal((await api('GET', `/galleries/${slug}`)).body.gallery.bannerWork, null);
+});
+
+/** In-memory stand-in for the Stripe API: records calls, returns plausible objects. */
+function fakeStripe() {
+  const sessions = new Map<string, any>();
+  const calls = { sessions: [] as any[], refunds: [] as any[], transfers: [] as any[], accounts: [] as any[], expired: [] as string[] };
+  const account = { active: false };
+  let n = 0;
+  const fake: any = {
+    checkout: {
+      sessions: {
+        create: async (p: any) => {
+          const id = `cs_${++n}`;
+          const s = { id, url: `https://checkout.stripe.test/${id}`, status: 'open', payment_status: 'unpaid', payment_intent: null, metadata: p.metadata, client_reference_id: p.client_reference_id };
+          sessions.set(id, s);
+          calls.sessions.push(p);
+          return s;
+        },
+        retrieve: async (id: string) => sessions.get(id),
+        expire: async (id: string) => {
+          calls.expired.push(id);
+          return Object.assign(sessions.get(id), { status: 'expired' });
+        },
+      },
+    },
+    charges: {
+      list: async (p: any) => ({ data: [{ id: `ch_${p.payment_intent}` }] }),
+      retrieve: async (id: string) => ({ id, balance_transaction: { currency: 'gbp', exchange_rate: 0.8 } }),
+    },
+    refunds: { create: async (p: any) => (calls.refunds.push(p), { id: `re_${++n}` }) },
+    transfers: { create: async (p: any) => (calls.transfers.push(p), { id: `tr_${++n}` }) },
+    accounts: {
+      create: async (p: any) => (calls.accounts.push(p), { id: 'acct_gallery' }),
+      retrieve: async () => ({
+        capabilities: { transfers: account.active ? 'active' : 'inactive' },
+        payouts_enabled: account.active,
+        details_submitted: account.active,
+        requirements: { currently_due: account.active ? [] : ['external_account'] },
+      }),
+      createLoginLink: async () => ({ url: 'https://connect.stripe.test/express' }),
+    },
+    accountLinks: { create: async () => ({ url: 'https://connect.stripe.test/onboarding' }) },
+    webhooks: new Stripe('sk_test_unused').webhooks,
+  };
+  /** Marks a Checkout page as paid, as if the buyer had completed it. */
+  const pay = (id: string) => Object.assign(sessions.get(id), { status: 'complete', payment_status: 'paid', payment_intent: `pi_${id}` });
+  return { fake, calls, account, pay, sessions };
+}
+
+test('Stripe payments: checkout, webhook, escrow, refund, cancel, gallery payouts', async () => {
+  const { fake, calls, account, pay } = fakeStripe();
+  setStripeClient(fake);
+  try {
+    assert.equal((await api('GET', '/config')).body.payments, 'stripe');
+    const seller = await login('seller@t.io');
+    const buyer = (await api('POST', '/auth/register', { name: 'Cleo Collector', email: 'cleo@t.io', password: 'Password#1', country: 'US' })).body.token;
+    const cats = (await api('GET', '/categories')).body.categories;
+    const media = (await api('GET', '/vendor/listings', undefined, seller)).body.listings[0].cover;
+    let n = 0;
+    const newListing = async () =>
+      (await api('POST', '/vendor/listings', { title: `Stripe Study ${++n}`, artist: 'A. Painter', medium: 'Oil', priceCents: 300_000, shippingDomesticCents: 0, shippingInternationalCents: 20_000, categoryId: cats[0].id, media: [media] }, seller)).body.listing;
+    const address = { fullName: 'Bea Buyer', line1: '1 Main St', city: 'Boston', postalCode: '02110', country: 'US' };
+    const place = async () => {
+      const listing = await newListing();
+      const r = await api('POST', '/orders', { listingId: listing.id, shippingAddress: address, acceptTerms: true }, buyer);
+      assert.equal(r.status, 201, JSON.stringify(r.body));
+      return r.body.order;
+    };
+    const act = (id: number, a: string, token: string, body?: object) => api('POST', `/orders/${id}/actions/${a}`, body ?? {}, token);
+    const status = async (id: number) => (await api('GET', `/orders/${id}`, undefined, buyer)).body.order;
+
+    // 1. Checkout: the demo "pay" button is refused; the buyer gets Stripe's page, reused if opened twice.
+    const o1 = await place();
+    assert.equal((await act(o1.id, 'pay', buyer)).status, 400);
+    assert.equal((await api('POST', `/orders/${o1.id}/checkout`, {}, seller)).status, 404, 'only the buyer can pay');
+    const url = (await api('POST', `/orders/${o1.id}/checkout`, {}, buyer)).body.url;
+    assert.match(url, /checkout\.stripe\.test/);
+    assert.equal((await api('POST', `/orders/${o1.id}/checkout`, {}, buyer)).body.url, url, 'no second payment page');
+    const params = calls.sessions[0];
+    assert.deepEqual(params.line_items.map((l: any) => l.price_data.unit_amount), [300_000, 20_000]);
+    assert.equal(params.payment_intent_data.transfer_group, o1.reference);
+
+    // 2. Stripe's signed webhook confirms the payment; repeats are harmless; forged calls are refused.
+    const sessionId = url.split('/').pop();
+    const session = pay(sessionId);
+    const payload = JSON.stringify({ id: 'evt_1', object: 'event', type: 'checkout.session.completed', data: { object: session } });
+    const hook = (sig: string) => fetch(base + '/api/stripe/webhook', { method: 'POST', headers: { 'content-type': 'application/json', 'stripe-signature': sig }, body: payload });
+    assert.equal((await hook('t=1,v1=forged')).status, 400);
+    const sig = fake.webhooks.generateTestHeaderString({ payload, secret: 'whsec_test' });
+    assert.equal((await hook(sig)).status, 200);
+    assert.equal((await hook(sig)).status, 200);
+    const paid = await status(o1.id);
+    assert.equal(paid.status, 'in_escrow');
+    assert.equal(paid.ledger.filter((t: any) => t.type === 'hold').length, 1);
+    assert.equal(paid.stripeChargeId, `ch_pi_${sessionId}`);
+
+    // 3. Gallery connects Stripe (cross-border: FR gallery, GB platform → recipient agreement).
+    assert.deepEqual((await api('GET', '/vendor/stripe', undefined, seller)).body, { enabled: true, connected: false, payoutsEnabled: false, detailsSubmitted: false });
+    assert.match((await api('POST', '/vendor/stripe/onboard', {}, seller)).body.url, /onboarding/);
+    assert.equal(calls.accounts[0].country, 'FR');
+    assert.equal(calls.accounts[0].tos_acceptance.service_agreement, 'recipient');
+    assert.equal((await api('POST', '/vendor/payouts', { amountCents: 5_000, method: 'wire', destination: 'FR76 0000' }, seller)).status, 400, 'no manual withdrawals');
+
+    // 4. Released before the gallery finished sign-up: the transfer waits, then goes once Stripe enables it.
+    await act(o1.id, 'dispatch', seller, { carrier: 'DHL Express', trackingNumber: '1234567890' });
+    await act(o1.id, 'confirm_delivery', buyer);
+    assert.equal((await act(o1.id, 'release', buyer)).body.order.status, 'released');
+    assert.equal(calls.transfers.length, 0);
+    account.active = true;
+    assert.equal((await api('GET', '/vendor/stripe', undefined, seller)).body.payoutsEnabled, true);
+    assert.equal(calls.transfers.length, 1);
+    const share = 320_000 - 45_000;
+    assert.deepEqual(
+      [calls.transfers[0].amount, calls.transfers[0].currency, calls.transfers[0].destination, calls.transfers[0].source_transaction],
+      [Math.floor(share * 0.8), 'gbp', 'acct_gallery', `ch_pi_${sessionId}`],
+    );
+    const stripePayout = (await api('GET', '/vendor/payouts', undefined, seller)).body.payouts.find((p: any) => p.method === 'stripe');
+    assert.deepEqual([stripePayout.amountCents, stripePayout.status], [share, 'paid']);
+    await api('GET', '/vendor/stripe', undefined, seller);
+    assert.equal(calls.transfers.length, 1, 'never paid twice');
+
+    // 5. Paid (confirmed when the buyer returns, no webhook), then declined: refunded to the card.
+    const o2 = await place();
+    pay((await api('POST', `/orders/${o2.id}/checkout`, {}, buyer)).body.url.split('/').pop());
+    assert.equal((await api('POST', `/orders/${o2.id}/payment/sync`, {}, buyer)).body.status, 'in_escrow');
+    assert.equal((await act(o2.id, 'decline', seller)).body.order.status, 'refunded');
+    assert.equal(calls.refunds.length, 1);
+    assert.equal(calls.refunds[0].payment_intent, (await status(o2.id)).stripePaymentIntentId);
+
+    // 6. Cancelled before paying: Stripe's page is closed so it can no longer take money.
+    const o3 = await place();
+    const s3 = (await api('POST', `/orders/${o3.id}/checkout`, {}, buyer)).body.url.split('/').pop();
+    assert.equal((await act(o3.id, 'cancel', buyer)).body.order.status, 'cancelled');
+    assert.deepEqual(calls.expired, [s3]);
+
+    // 7. Cancel after paying (webhook not yet arrived) is refused, and the payment is recorded instead.
+    const o4 = await place();
+    pay((await api('POST', `/orders/${o4.id}/checkout`, {}, buyer)).body.url.split('/').pop());
+    assert.equal((await act(o4.id, 'cancel', buyer)).status, 409);
+    assert.equal((await status(o4.id)).status, 'in_escrow');
+    await act(o4.id, 'decline', seller);
+  } finally {
+    setStripeClient(null);
+  }
 });
 
 test('Google sign-in: sign up, sign in again, link by email, staff refused, state checked', async () => {

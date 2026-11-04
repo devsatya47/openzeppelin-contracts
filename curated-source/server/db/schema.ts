@@ -48,6 +48,9 @@ export const galleries = sqliteTable(
     status: text('status', { enum: GALLERY_STATUS }).notNull().default('pending'),
     featured: integer('featured', { mode: 'boolean' }).notNull().default(false),
     reviewNote: text('review_note'),
+    // Stripe Connect (Express) account that receives the gallery's share of each sale.
+    stripeAccountId: text('stripe_account_id'),
+    stripePayoutsEnabled: integer('stripe_payouts_enabled', { mode: 'boolean' }).notNull().default(false),
     ...timestamps,
   },
   (t) => [uniqueIndex('galleries_owner_idx').on(t.ownerId)],
@@ -172,6 +175,14 @@ export const orders = sqliteTable(
     status: text('status', { enum: ORDER_STATUS }).notNull().default('pending'),
     carrier: text('carrier'),
     trackingNumber: text('tracking_number'),
+    // Stripe references, set when payments run through Stripe (see server/lib/payments.ts).
+    stripeSessionId: text('stripe_session_id'),
+    // The reservation is kept until this time while a Stripe payment page is open.
+    paymentExpiresAt: text('payment_expires_at'),
+    stripePaymentIntentId: text('stripe_payment_intent_id'),
+    stripeChargeId: text('stripe_charge_id'),
+    stripeTransferId: text('stripe_transfer_id'),
+    stripeRefundId: text('stripe_refund_id'),
     ...timestamps,
     updatedAt: text('updated_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
   },
@@ -254,7 +265,7 @@ export const payouts = sqliteTable(
     id: integer('id').primaryKey({ autoIncrement: true }),
     galleryId: integer('gallery_id').notNull().references(() => galleries.id),
     amountCents: integer('amount_cents').notNull(),
-    method: text('method', { enum: ['bank_transfer', 'wire', 'paypal'] }).notNull(),
+    method: text('method', { enum: ['bank_transfer', 'wire', 'paypal', 'stripe'] }).notNull(),
     destination: text('destination').notNull(),
     status: text('status', { enum: PAYOUT_STATUS }).notNull().default('requested'),
     note: text('note'),

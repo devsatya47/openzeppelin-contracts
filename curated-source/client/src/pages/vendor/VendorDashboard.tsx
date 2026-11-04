@@ -10,7 +10,7 @@ import { Empty, ErrorNote, Field, Notice, Spinner, Stat, StatusPill, Tabs } from
 import { api, mediaUrl } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { COUNTRIES, date, money } from '../../lib/format';
-import { useApi, useDocumentTitle } from '../../lib/hooks';
+import { useApi, useDocumentTitle, usePlatformConfig } from '../../lib/hooks';
 import type { Balance, Listing, Media, Order } from '../../lib/types';
 
 type Tab = 'overview' | 'inventory' | 'orders' | 'questions' | 'enquiries' | 'payouts' | 'gallery';
@@ -316,30 +316,94 @@ function Enquiries({ onChange }: { onChange: () => void }) {
   );
 }
 
+type StripeStatus = { enabled: boolean; connected?: boolean; payoutsEnabled?: boolean; detailsSubmitted?: boolean; requirementsDue?: number };
+
+/** Connects the gallery's bank account through Stripe (identity and bank details are entered on Stripe's own pages). */
+function StripePayouts({ approved, onChange }: { approved: boolean; onChange: () => void }) {
+  const { data, reload } = useApi<StripeStatus>('/vendor/stripe');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const [params] = useSearchParams();
+  const returned = params.get('stripe') === 'return';
+  if (!data) return <div className="card h-fit p-6"><Spinner /></div>;
+  const go = async (path: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const { url } = await api<{ url: string }>(path, { body: {} });
+      window.location.assign(url);
+    } catch (e) {
+      setError(e);
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="card h-fit space-y-5 p-6">
+      <h3 className="text-2xl">Get paid</h3>
+      {!approved ? (
+        <Notice tone="warn">Payouts unlock once your gallery is approved.</Notice>
+      ) : data.payoutsEnabled ? (
+        <>
+          <Notice tone="ok">Your Stripe account is connected.</Notice>
+          <p className="text-sm text-mute">
+            When a collector confirms delivery, your share (price and shipping, less our commission) is sent to your Stripe account automatically. Stripe then pays it into your bank.
+          </p>
+          <button type="button" onClick={() => go('/vendor/stripe/dashboard')} className="btn-outline w-full" disabled={busy}>
+            <ExternalLink size={14} /> Open Stripe: payouts &amp; bank details
+          </button>
+          <button type="button" onClick={() => { reload(); onChange(); }} className="text-xs uppercase tracking-[0.2em] text-faint hover:text-bone">Refresh status</button>
+        </>
+      ) : (
+        <>
+          {returned && data.connected && (
+            <Notice tone="warn">
+              {data.detailsSubmitted
+                ? 'Thank you. Stripe is checking your details; this usually takes a few minutes. Refresh this page shortly.'
+                : 'Your Stripe sign-up is not finished yet. Continue where you left off.'}
+            </Notice>
+          )}
+          <p className="text-sm text-mute">
+            We pay galleries through <strong className="text-bone">Stripe</strong>. Connect your bank account once, on Stripe’s secure pages, and each completed sale is paid to you automatically.
+            Stripe will ask for your identity and bank details. Curated Art never sees them.
+          </p>
+          {!!data.requirementsDue && data.connected && <p className="text-xs text-faint">Stripe needs {data.requirementsDue} more detail{data.requirementsDue === 1 ? '' : 's'} from you.</p>}
+          <ErrorNote error={error} />
+          <button type="button" onClick={() => go('/vendor/stripe/onboard')} className="btn-gold w-full" disabled={busy}>
+            {busy ? 'Opening Stripe…' : data.connected ? 'Continue Stripe sign-up' : 'Connect bank account with Stripe'}
+          </button>
+          <p className="text-xs text-faint">Sales completed before you connect are kept for you and sent as soon as your account is ready.</p>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Payouts({ approved }: { approved: boolean }) {
   const { data, reload } = useApi<{ payouts: { id: number; amountCents: number; method: string; destination: string; status: string; createdAt: string; note: string | null }[]; balance: Balance }>('/vendor/payouts');
   const [form, setForm] = useState({ amount: '', method: 'bank_transfer', destination: '' });
   const [error, setError] = useState<unknown>(null);
   const [ok, setOk] = useState(false);
+  const { payments } = usePlatformConfig();
   if (!data) return <Spinner />;
   const b = data.balance;
+  const stripe = payments === 'stripe';
   return (
     <div className="grid gap-8 lg:grid-cols-[1fr_380px]">
       <div>
         <div className="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <Stat label="Available" value={<span className="text-gold">{money(b.availableCents)}</span>} />
+          <Stat label={stripe ? 'Awaiting transfer' : 'Available'} value={<span className="text-gold">{money(b.availableCents)}</span>} />
           <Stat label="In escrow" value={money(b.inEscrowCents)} />
           <Stat label="Released (lifetime)" value={money(b.releasedCents)} />
-          <Stat label="Withdrawn" value={money(b.withdrawnCents)} />
+          <Stat label={stripe ? 'Paid to you' : 'Withdrawn'} value={money(b.withdrawnCents)} />
         </div>
-        <h3 className="mb-4 text-2xl">Withdrawal history</h3>
-        {data.payouts.length === 0 ? <p className="text-sm text-faint">No withdrawals yet.</p> : (
+        <h3 className="mb-4 text-2xl">{stripe ? 'Payments to you' : 'Withdrawal history'}</h3>
+        {data.payouts.length === 0 ? <p className="text-sm text-faint">{stripe ? 'Nothing paid yet. Each sale is paid once the collector confirms delivery.' : 'No withdrawals yet.'}</p> : (
           <table className="w-full text-sm">
             <tbody className="divide-y divide-line border-y border-line">
               {data.payouts.map((p) => (
                 <tr key={p.id}>
                   <td className="py-3 text-mute">{date(p.createdAt)}</td>
-                  <td className="py-3 capitalize text-faint">{p.method.replace('_', ' ')} · {p.destination}</td>
+                  <td className="py-3 text-faint">{p.method === 'stripe' ? p.note ?? 'Stripe transfer' : <span className="capitalize">{p.method.replace('_', ' ')} · {p.destination}</span>}</td>
                   <td className="py-3 text-right tabular-nums">{money(p.amountCents, 'USD', { decimals: true })}</td>
                   <td className="py-3 pl-4 text-right"><StatusPill status={p.status} /></td>
                 </tr>
@@ -348,6 +412,7 @@ function Payouts({ approved }: { approved: boolean }) {
           </table>
         )}
       </div>
+      {stripe ? <StripePayouts approved={approved} onChange={reload} /> : (
       <form
         className="card h-fit space-y-5 p-6"
         onSubmit={async (e) => {
@@ -383,6 +448,7 @@ function Payouts({ approved }: { approved: boolean }) {
         {ok && <Notice tone="ok">Payout requested. Our finance team will process it shortly.</Notice>}
         <button className="btn-gold w-full" disabled={!approved || b.availableCents < 1000}>Request withdrawal</button>
       </form>
+      )}
     </div>
   );
 }
